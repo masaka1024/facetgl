@@ -1,0 +1,30 @@
+{
+  "name": "facetgl",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Desktop 3D model viewer (glTF / GLB / VRM / PMX / FBX / OBJ / STL) built with Tauri and three.js",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/masaka1024/facetgl.git"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2.12.3",
+    "@types/three": "^0.160.0",
+    "typescript": "^5.0.0",
+    "vite": "^5.0.0"
+  },
+  "dependencies": {
+    "@pixiv/three-vrm": "^3.5.5",
+    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/plugin-dialog": "^2.8.3",
+    "three": "^0.160.0"
+  }
+}

@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FacetGL</title>
+    <style>
+        body { margin: 0; overflow: hidden; background-color: #111; font-family: sans-serif; }
+        #drop-zone {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+            display: flex; align-items: center; justify-content: center;
+            color: #555; border: 4px dashed #333; box-sizing: border-box;
+            z-index: 10; pointer-events: none; transition: all 0.3s;
+            font-size: 1.5rem;
+        }
+        body.loaded #drop-zone { opacity: 0; }
+        body.dragover #drop-zone { opacity: 1; background: rgba(255,255,255,0.05); border-color: #777; color: #aaa; }
+        #toolbar {
+            position: absolute; top: 10px; left: 10px; z-index: 20;
+            display: flex; align-items: center; gap: 10px;
+        }
+        button, select {
+            background: #2a2a2a; color: #ccc; border: 1px solid #444; border-radius: 4px;
+            padding: 4px 12px; font-size: 0.8rem; cursor: pointer;
+        }
+        button:hover, select:hover { background: #333; color: #fff; }
+        #info { color: #888; font-size: 0.8rem; pointer-events: none; }
+
+        /* Info panel */
+        #info-button { display: none; }
+        body.loaded #info-button { display: inline-block; }
+        body.show-info #info-button { background: #3a3a3a; color: #fff; }
+        #info-panel {
+            position: absolute; top: 0; right: 0; bottom: 0; width: 380px; z-index: 30;
+            background: rgba(20, 20, 20, 0.92); border-left: 1px solid #333;
+            color: #ccc; font-size: 0.78rem; overflow-y: auto; padding: 12px 14px;
+            box-sizing: border-box; display: none;
+        }
+        body.show-info.loaded #info-panel { display: block; }
+        #info-panel h2 { font-size: 0.95rem; margin: 0 0 10px; color: #fff; word-break: break-all; }
+        #info-panel details { margin-bottom: 6px; }
+        #info-panel summary { cursor: pointer; color: #9cf; padding: 4px 0; user-select: none; }
+        #info-panel table { border-collapse: collapse; width: 100%; margin: 2px 0 8px; }
+        #info-panel th, #info-panel td { text-align: left; padding: 2px 6px; border-bottom: 1px solid #2a2a2a; vertical-align: top; }
+        #info-panel th { color: #888; font-weight: normal; white-space: nowrap; }
+        #info-panel td { word-break: break-all; }
+        #info-panel table.list th { color: #777; border-bottom: 1px solid #444; }
+        #info-panel .tree { font-family: Consolas, monospace; font-size: 0.75rem; }
+        #info-panel .tree details, #info-panel .tree .leaf { margin: 0 0 0 14px; }
+        #info-panel .tree summary { color: #ccc; padding: 1px 0; }
+        #info-panel .tree .leaf { color: #999; }
+        #info-panel .warning {
+            background: rgba(255, 170, 60, 0.12); border: 1px solid rgba(255, 170, 60, 0.4);
+            border-radius: 4px; padding: 6px 8px; margin-bottom: 10px; color: #fc9; word-break: break-all;
+        }
+        #info-panel .warning-title { font-weight: bold; margin-bottom: 2px; }
+        #info .warn { color: #fa6; }
+
+        /* extras.mmd toggle (glTF converted by mmd2gltf) */
+        #mmd-button { display: none; }
+        body.loaded.has-mmd-extras #mmd-button { display: inline-block; }
+        #mmd-button.active { background: #3a2a40; border-color: #b07ad0; color: #f0d8ff; }
+        #info-panel .comment { white-space: pre-wrap; color: #aaa; margin: 4px 0 8px; font-size: 0.75rem; }
+
+        /* 表示設定 popover */
+        #view-button.active { background: #3a3a3a; color: #fff; }
+        #view-panel {
+            position: absolute; top: 50px; left: 10px; z-index: 25; width: 280px; display: none;
+            background: rgba(20, 20, 20, 0.95); border: 1px solid #444; border-radius: 6px;
+            padding: 10px 12px; color: #ccc; font-size: 0.8rem;
+        }
+        #view-panel.open { display: block; }
+        #view-panel .row { margin-bottom: 10px; }
+        #view-panel .label { display: flex; justify-content: space-between; margin-bottom: 4px; }
+        #view-panel .label span:last-child { color: #fff; font-family: Consolas, monospace; }
+        #view-panel .note { color: #777; font-size: 0.72rem; margin-top: 2px; }
+        #view-panel input[type=range] { width: 100%; accent-color: #6af; }
+        #view-panel input[type=range]:disabled { opacity: 0.4; }
+        #view-panel .segmented { display: flex; gap: 4px; }
+        #view-panel .segmented button { flex: 1; }
+        #view-panel .segmented button.active { background: #2d4a6a; border-color: #6af; color: #fff; }
+        #view-reset { width: 100%; }
+
+        /* Animation bar */
+        #anim-bar {
+            position: absolute; left: 10px; right: 10px; bottom: 10px; z-index: 20;
+            display: none; align-items: center; gap: 8px;
+            background: rgba(20, 20, 20, 0.85); border: 1px solid #333; border-radius: 6px; padding: 6px 10px;
+        }
+        body.loaded.has-animation #anim-bar { display: flex; }
+        body.show-info #anim-bar { right: 390px; }
+        #anim-play { width: 40px; }
+        #anim-clip { max-width: 220px; }
+        #anim-seek { flex: 1; min-width: 80px; accent-color: #6af; }
+        #anim-time { color: #aaa; font-size: 0.75rem; font-family: Consolas, monospace; white-space: nowrap; }
+    </style>
+</head>
+<body>
+    <div id="drop-zone">glTF / GLB ファイルをドロップ、または「開く」から選択してください</div>
+    <div id="toolbar">
+        <button id="open-button" title="Ctrl+O">開く</button>
+        <button id="info-button" title="I">情報</button>
+        <button id="view-button">表示設定</button>
+        <button id="mmd-button" title="extras.mmd（PMX の材質情報）を検出しました。クリックで MMD 表示と glTF 標準表示を切り替えます">MMD表示: ON</button>
+        <div id="info">FacetGL</div>
+    </div>
+    <div id="view-panel">
+        <div class="row">
+            <div class="label"><span>輪郭線の太さ</span><span id="edge-scale-value"></span></div>
+            <input id="edge-scale" type="range" min="0" max="4" step="0.1">
+            <div class="note">MMD 表示のとき。エッジサイズ 1.0 あたりの線の幅 (MMD 相当は 1.0 px)</div>
+        </div>
+        <div class="row">
+            <div class="label"><span>投影</span><span>P キーで切替</span></div>
+            <div class="segmented">
+                <button data-projection="perspective">透視</button>
+                <button data-projection="orthographic">平行</button>
+            </div>
+        </div>
+        <div class="row">
+            <div class="label"><span>視野角</span><span id="fov-value"></span></div>
+            <input id="fov" type="range" min="10" max="90" step="1">
+            <div class="note">透視のとき。MMD の初期値は 30°</div>
+        </div>
+        <button id="view-reset">初期値に戻す</button>
+    </div>
+    <div id="info-panel"></div>
+    <div id="anim-bar">
+        <button id="anim-play" title="Space">▶</button>
+        <select id="anim-clip"></select>
+        <input id="anim-seek" type="range" min="0" max="1" step="0.001" value="0">
+        <span id="anim-time">0.00 / 0.00</span>
+        <select id="anim-speed" title="再生速度">
+            <option value="0.25">×0.25</option>
+            <option value="0.5">×0.5</option>
+            <option value="1" selected>×1</option>
+            <option value="1.5">×1.5</option>
+            <option value="2">×2</option>
+        </select>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

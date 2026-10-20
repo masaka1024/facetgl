@@ -1,0 +1,22 @@
+# Dependencies / build output
+node_modules/
+dist/
+
+# Tauri / Cargo build output (src-tauri/.gitignore covers target/ and gen/schemas too)
+src-tauri/target/
+src-tauri/gen/
+
+# Editors / OS
+.vscode/
+.idea/
+*.log
+Thumbs.db
+.DS_Store
+
+# 3D models used for local testing; most are third-party and must not be committed
+*.pmx
+*.pmd
+*.vrm
+*.fbx
+*.FBX
+test-models/

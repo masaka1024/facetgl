@@ -1,0 +1,395 @@
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import type { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
+import type { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
+import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
+import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
+import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
+import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
+import { STLLoader } from 'three/addons/loaders/STLLoader.js';
+import { TGALoader } from 'three/addons/loaders/TGALoader.js';
+import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
+import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { renderInfoPanel, renderSceneInfoPanel, type ModelSource } from './info';
+import { applyMmdShading, buildMmdExtrasMaterials, type MmdExtrasMaterials } from './mmdShading';
+
+export const FORMATS = [
+  { name: 'glTF / GLB', extensions: ['glb', 'gltf'] },
+  { name: 'VRM', extensions: ['vrm'] },
+  { name: 'MMD (PMX / PMD)', extensions: ['pmx', 'pmd'] },
+  { name: 'FBX', extensions: ['fbx'] },
+  { name: 'OBJ', extensions: ['obj'] },
+  { name: 'STL', extensions: ['stl'] },
+];
+
+export const MODEL_EXTENSIONS = FORMATS.flatMap((f) => f.extensions);
+
+export interface LoaderContext {
+  dracoLoader: DRACOLoader;
+  ktx2Loader: KTX2Loader;
+}
+
+export interface LoadedModel {
+  object: THREE.Object3D;
+  animations: THREE.AnimationClip[];
+  blobUrls: string[];
+  // Textures etc. that failed to load; filled in as loading finishes in the background
+  failedFiles: string[];
+  renderInfo: (container: HTMLElement) => void;
+  update?: (delta: number) => void;
+  // 'mmd' switches to MMD-style lighting and edge outlines
+  style?: 'mmd';
+  // glTF converted from PMX with extras.mmd (mmd2gltf): MMD materials that can be toggled
+  mmdExtras?: MmdExtrasMaterials;
+}
+
+function trackFailures(manager: THREE.LoadingManager, failedFiles: string[], nameOf: (url: string) => string) {
+  manager.onError = (url) => {
+    const name = nameOf(url);
+    if (!failedFiles.includes(name)) failedFiles.push(name);
+  };
+}
+
+function urlFileName(url: string) {
+  const last = url.split(/[\\/]/).pop() ?? url;
+  try {
+    return decodeURIComponent(last);
+  } catch {
+    return last;
+  }
+}
+
+export function fileExtension(path: string) {
+  return path.split('.').pop()?.toLowerCase() ?? '';
+}
+
+export function loadModelFile(path: string, ctx: LoaderContext): Promise<LoadedModel> {
+  switch (fileExtension(path)) {
+    case 'glb':
+    case 'gltf':
+    case 'vrm':
+      return loadGltf(path, ctx);
+    case 'pmx':
+    case 'pmd':
+      return loadMmd(path);
+    case 'fbx':
+      return loadFbx(path);
+    case 'obj':
+      return loadObj(path);
+    case 'stl':
+      return loadStl(path);
+    default:
+      return Promise.reject(new Error('対応していない形式です。'));
+  }
+}
+
+// --- File access ---
+
+function readFile(path: string) {
+  return invoke<ArrayBuffer>('read_file', { path });
+}
+
+function fileSize(path: string) {
+  return invoke<number>('file_size', { path });
+}
+
+function splitPath(path: string) {
+  const fileName = path.split(/[\\/]/).pop() ?? path;
+  return { fileName, dir: path.slice(0, path.length - fileName.length - 1) };
+}
+
+function joinPath(dir: string, relative: string) {
+  return dir + '\\' + relative.replace(/\//g, '\\');
+}
+
+// URL served by Tauri's asset protocol. Each path segment is encoded separately so that
+// loaders can resolve textures relative to the model ("tex/body.png" -> same folder).
+function assetUrl(path: string) {
+  const base = convertFileSrc('');
+  return base + path.replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/');
+}
+
+function assetDirUrl(path: string) {
+  return assetUrl(splitPath(path).dir) + '/';
+}
+
+// --- Texture lookup for formats that reference textures by file name ---
+
+interface FolderIndex {
+  files: Set<string>;               // relative paths, lower case
+  byName: Map<string, string>;      // file name (lower case) -> relative path
+}
+
+async function indexFolder(path: string): Promise<FolderIndex> {
+  const list = await invoke<string[]>('list_files', { dir: splitPath(path).dir });
+  const byName = new Map<string, string>();
+  // Shallow paths first so a file next to the model wins over one in a subfolder
+  for (const rel of [...list].sort((a, b) => a.split('/').length - b.split('/').length)) {
+    const name = rel.split('/').pop()!.toLowerCase();
+    if (!byName.has(name)) byName.set(name, rel);
+  }
+  return { files: new Set(list.map((f) => f.toLowerCase())), byName };
+}
+
+// Models often point at textures that were moved (e.g. into "tex/") or at the author's
+// absolute paths. Redirect a missing texture to a file with the same name in the folder.
+function textureManager(path: string, index: FolderIndex, failedFiles: string[]) {
+  const dirUrl = assetDirUrl(path);
+  const manager = new THREE.LoadingManager();
+  trackFailures(manager, failedFiles, urlFileName);
+  manager.setURLModifier((url) => {
+    if (!url.startsWith(dirUrl)) return url;
+    let rel = url.slice(dirUrl.length);
+    try {
+      rel = decodeURIComponent(rel);
+    } catch {
+      // Keep the raw string if it contains a stray "%"
+    }
+    rel = rel.replace(/\\/g, '/');
+    if (index.files.has(rel.toLowerCase())) return url;
+    const found = index.byName.get(rel.split('/').pop()!.toLowerCase());
+    return found ? dirUrl + found.split('/').map(encodeURIComponent).join('/') : url;
+  });
+  manager.addHandler(/\.tga$/i, new TGALoader(manager));
+  return manager;
+}
+
+// --- glTF / GLB / VRM ---
+
+// Extracts the glTF JSON (and the BIN chunk of a .glb) from the loaded file
+function parseGltfContainer(buffer: ArrayBuffer): { json: any; glbBin: Uint8Array | null } {
+  const view = new DataView(buffer);
+  const isGlb = buffer.byteLength >= 20 && view.getUint32(0, true) === 0x46546c67; // 'glTF'
+  if (isGlb) {
+    const jsonLength = view.getUint32(12, true);
+    const json = JSON.parse(new TextDecoder().decode(new Uint8Array(buffer, 20, jsonLength)));
+    const binHeader = 20 + jsonLength;
+    const glbBin = binHeader + 8 <= buffer.byteLength
+      ? new Uint8Array(buffer, binHeader + 8, view.getUint32(binHeader, true))
+      : null;
+    return { json, glbBin };
+  }
+  return { json: JSON.parse(new TextDecoder().decode(buffer)), glbBin: null };
+}
+
+// Reads every external .bin / texture next to the model
+async function loadExternalResources(json: any, dir: string) {
+  const uris = new Set<string>();
+  for (const item of [...(json.buffers ?? []), ...(json.images ?? [])]) {
+    if (typeof item.uri === 'string' && !item.uri.startsWith('data:')) {
+      uris.add(item.uri);
+    }
+  }
+
+  const blobUrls = new Map<string, string>();
+  const bytes = new Map<string, Uint8Array>();
+  await Promise.all(Array.from(uris, async (uri) => {
+    const data = await readFile(joinPath(dir, decodeURIComponent(uri)));
+    blobUrls.set(uri, URL.createObjectURL(new Blob([data])));
+    bytes.set(uri, new Uint8Array(data));
+  }));
+  return { blobUrls, bytes };
+}
+
+async function loadGltf(path: string, ctx: LoaderContext): Promise<LoadedModel> {
+  const { fileName, dir } = splitPath(path);
+  const buffer = await readFile(path);
+  const { json, glbBin } = parseGltfContainer(buffer);
+  const external = await loadExternalResources(json, dir);
+  const blobUrls = external.blobUrls;
+
+  try {
+    const failedFiles: string[] = [];
+    const uriOfBlob = new Map([...blobUrls].map(([uri, blob]) => [blob, uri]));
+    const manager = new THREE.LoadingManager();
+    manager.setURLModifier((url) => blobUrls.get(url) ?? url);
+    trackFailures(manager, failedFiles, (url) => uriOfBlob.get(url) ?? urlFileName(url));
+
+    const loader = new GLTFLoader(manager)
+      .setDRACOLoader(ctx.dracoLoader)
+      .setKTX2Loader(ctx.ktx2Loader)
+      .setMeshoptDecoder(MeshoptDecoder);
+    // Only acts on files that contain VRM extensions
+    loader.register((parser) => new VRMLoaderPlugin(parser));
+
+    const gltf = await loader.parseAsync(buffer, '');
+    const vrm = gltf.userData.vrm as VRM | undefined;
+    // VRM 0.x models face -Z; turn them toward the camera like VRM 1.0
+    if (vrm) VRMUtils.rotateVRM0(vrm);
+
+    // Files from mmd2gltf keep the PMX materials in extras.mmd; show them the MMD way
+    const mmdExtras = await buildMmdExtrasMaterials(gltf);
+    mmdExtras?.setEnabled(true);
+
+    const source: ModelSource = {
+      fileName,
+      json,
+      glbBin,
+      external: external.bytes,
+      totalBytes: buffer.byteLength + [...external.bytes.values()].reduce((sum, b) => sum + b.length, 0),
+    };
+
+    return {
+      object: gltf.scene,
+      animations: gltf.animations,
+      blobUrls: [...blobUrls.values()],
+      failedFiles,
+      renderInfo: (container) => renderInfoPanel(container, source, gltf, vrm?.meta, failedFiles),
+      update: vrm ? (delta) => vrm.update(delta) : undefined,
+      style: mmdExtras ? 'mmd' : undefined,
+      mmdExtras: mmdExtras ?? undefined,
+    };
+  } catch (error) {
+    blobUrls.forEach((u) => URL.revokeObjectURL(u));
+    throw error;
+  }
+}
+
+// --- Other formats (loaded through the asset protocol so relative textures resolve) ---
+
+async function sceneModel(
+  path: string,
+  format: string,
+  object: THREE.Object3D,
+  animations: THREE.AnimationClip[],
+  failedFiles: string[],
+): Promise<LoadedModel> {
+  const totalBytes = await fileSize(path);
+  const { fileName } = splitPath(path);
+  return {
+    object,
+    animations,
+    blobUrls: [],
+    failedFiles,
+    renderInfo: (container) => renderSceneInfoPanel(container, { fileName, format, totalBytes, object, animations, failedFiles }),
+  };
+}
+
+async function loadMmd(path: string): Promise<LoadedModel> {
+  const failedFiles: string[] = [];
+  const manager = textureManager(path, await indexFolder(path), failedFiles);
+  const mesh = await new MMDLoader(manager).loadAsync(assetUrl(path));
+  applyMmdShading(mesh);
+  const model = await sceneModel(path, fileExtension(path) === 'pmd' ? 'PMD (MMD)' : 'PMX (MMD)', mesh, [], failedFiles);
+  return { ...model, style: 'mmd' };
+}
+
+async function loadFbx(path: string) {
+  const failedFiles: string[] = [];
+  const index = await indexFolder(path);
+  const buffer = prepareFbx(await readFile(path), index);
+  const group = new FBXLoader(textureManager(path, index, failedFiles)).parse(buffer, assetDirUrl(path));
+  fixSelfIlluminatedMaterials(group);
+  return sceneModel(path, 'FBX', group, group.animations, failedFiles);
+}
+
+// 3ds Max exports often set self-illumination to 100% (EmissiveColor 1,1,1) for a flat,
+// unlit look. three.js would then render the mesh pure white, so emit the texture instead.
+function fixSelfIlluminatedMaterials(root: THREE.Object3D) {
+  root.traverse((child) => {
+    const mesh = child as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    for (const material of Array.isArray(mesh.material) ? mesh.material : [mesh.material]) {
+      const m = material as THREE.MeshPhongMaterial;
+      if (!m.map || !m.emissive || m.emissiveMap) continue;
+      if (m.emissive.r + m.emissive.g + m.emissive.b < 2.7) continue;
+      m.emissiveMap = m.map;
+      m.color.setRGB(0, 0, 0);
+      m.needsUpdate = true;
+    }
+  });
+}
+
+const FBX_BINARY_MAGIC = 'Kaydara FBX Binary';
+const BROWSER_IMAGE_EXTENSIONS = ['png', 'tga', 'jpg', 'jpeg', 'bmp'];
+
+function prepareFbx(buffer: ArrayBuffer, index: FolderIndex): ArrayBuffer {
+  const bytes = new Uint8Array(buffer);
+  replacePsdReferences(bytes, index);
+
+  const isBinary = new TextDecoder().decode(bytes.subarray(0, FBX_BINARY_MAGIC.length)) === FBX_BINARY_MAGIC;
+  if (isBinary) return buffer;
+  return new TextEncoder().encode(reindentAsciiFbx(new TextDecoder().decode(bytes))).buffer;
+}
+
+// Browsers cannot decode .psd. Point those references at a same-named image that exists
+// in the folder. The extension keeps its length, so binary FBX string sizes stay valid.
+function replacePsdReferences(bytes: Uint8Array, index: FolderIndex) {
+  const isDelimiter = (b: number) => b < 0x20 || b === 0x22 || b === 0x2f || b === 0x5c; // control, " / \
+  for (let i = 0; i + 4 <= bytes.length; i++) {
+    if (bytes[i] !== 0x2e) continue; // '.'
+    const ext = String.fromCharCode(bytes[i + 1], bytes[i + 2], bytes[i + 3]).toLowerCase();
+    if (ext !== 'psd' || (i + 4 < bytes.length && !isDelimiter(bytes[i + 4]))) continue;
+
+    let start = i;
+    while (start > 0 && !isDelimiter(bytes[start - 1])) start--;
+    const stem = new TextDecoder().decode(bytes.subarray(start, i)).toLowerCase();
+    const replacement = BROWSER_IMAGE_EXTENSIONS.find((e) => e.length === 3 && index.byName.has(`${stem}.${e}`));
+    if (replacement) {
+      for (let k = 0; k < 3; k++) bytes[i + 1 + k] = replacement.charCodeAt(k);
+    }
+  }
+}
+
+// three.js's ASCII FBX parser relies on tab indentation. Some exporters indent with spaces
+// or put array data at column 0, so rebuild the indentation from the brace nesting.
+function reindentAsciiFbx(text: string) {
+  let depth = 0;
+  return text.split(/\r?\n/).map((line) => {
+    const t = line.trim();
+    if (t === '' || t.startsWith(';')) return t;
+    if (t.startsWith('}')) {
+      depth = Math.max(0, depth - 1);
+      return '\t'.repeat(depth) + t;
+    }
+    if (/^\w+:/.test(t)) {
+      const indented = '\t'.repeat(depth) + t;
+      if (t.endsWith('{')) depth++;
+      return indented;
+    }
+    return t; // continuation line of a long array
+  }).join('\n');
+}
+
+async function loadObj(path: string) {
+  const text = new TextDecoder().decode(await readFile(path));
+  const objLoader = new OBJLoader();
+  const failedFiles: string[] = [];
+
+  // Materials and textures come from the .mtl file referenced by "mtllib"
+  const mtlName = /^mtllib\s+(.+?)\s*$/m.exec(text)?.[1];
+  if (mtlName) {
+    try {
+      const dirUrl = assetDirUrl(path);
+      const manager = textureManager(path, await indexFolder(path), failedFiles);
+      const mtlLoader = new MTLLoader(manager).setPath(dirUrl).setResourcePath(dirUrl);
+      const materials = await mtlLoader.loadAsync(mtlName.split(/[\\/]/).map(encodeURIComponent).join('/'));
+      materials.preload();
+      objLoader.setMaterials(materials);
+    } catch (error) {
+      console.warn('MTL could not be loaded:', mtlName, error);
+      if (!failedFiles.includes(mtlName)) failedFiles.push(mtlName);
+    }
+  }
+
+  return sceneModel(path, 'OBJ', objLoader.parse(text), [], failedFiles);
+}
+
+async function loadStl(path: string) {
+  const geometry = new STLLoader().parse(await readFile(path)) as THREE.BufferGeometry & { hasColors?: boolean };
+  const material = new THREE.MeshStandardMaterial({
+    color: geometry.hasColors ? 0xffffff : 0xb8c0cc,
+    vertexColors: !!geometry.hasColors,
+    metalness: 0.1,
+    roughness: 0.6,
+  });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = splitPath(path).fileName;
+  // STL files from CAD / 3D printing are usually Z-up
+  mesh.rotation.x = -Math.PI / 2;
+
+  const group = new THREE.Group();
+  group.add(mesh);
+  return sceneModel(path, 'STL', group, [], []);
+}
