@@ -56,6 +56,8 @@ files converted by [mmd2gltf](https://github.com/masaka1024/mmd2gltf-gui).*
 
 PMX/PMD と、mmd2gltf が出力する `extras.mmd` 付きの glTF は、MMD のシェーディングを再現して描画します。
 
+![mmd2gltf で変換した GLB を MMD 表示で開き、extras.mmd の情報を表示したところ (ニコニ立体ちゃん)](docs/screenshots/mmd-extras.png)
+
 ```
 color = saturate(拡散色 × ライト色 + 環境色) × テクスチャ  (+ / × スフィア)
 color = color × トゥーン(N·L) + スペキュラ × ライト色 × pow(N·H, 反射強度)
@@ -92,3 +94,8 @@ npm run tauri build   # インストーラーを作成 (src-tauri/target/release
 - **FlightHelmet** — © 2018, Public. [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)
 - **Fox** — © 2014, tomkranis; glTF conversion © 2017, @AsoboStudio and @scurest.
   [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
+
+MMD 表示のスクリーンショット (`docs/screenshots/mmd-extras.png`) は
+[ニコニ立体ちゃん](https://3d.nicovideo.jp/alicia/) (© dwango, inc.) を
+[利用規約](https://3d.nicovideo.jp/alicia/rule.html) に基づいて使用しています。
+この画像は MIT ライセンスの対象外です。FacetGL は株式会社ドワンゴの公式なものではありません。
