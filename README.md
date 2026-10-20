@@ -7,6 +7,9 @@ glTF / GLB を中心に、VRM・MMD (PMX/PMD)・FBX・OBJ・STL を開ける Win
 built with Tauri and three.js. It reproduces MMD's own shading for PMX files and for glTF
 files converted by [mmd2gltf](https://github.com/masaka1024/mmd2gltf-gui).*
 
+**🌐 Web 版: <https://masaka1024.github.io/facetgl/>** — インストール不要。ブラウザにモデルをドロップするだけで開けます
+(ファイルはブラウザ内だけで読み込まれ、どこにも送信されません)。
+
 ![外部の .bin / テクスチャを参照する .gltf を開き、情報パネルを表示したところ](docs/screenshots/info-panel.png)
 
 ![アニメーション付きの GLB を再生しているところ](docs/screenshots/animation.png)
@@ -35,7 +38,15 @@ files converted by [mmd2gltf](https://github.com/masaka1024/mmd2gltf-gui).*
 | OBJ | `.obj` | `.mtl` とテクスチャを同じフォルダから読み込み |
 | STL | `.stl` | Z 軸が上の向きとして表示 |
 
-## インストール
+## Web 版
+
+<https://masaka1024.github.io/facetgl/> でそのまま使えます。デスクトップ版と同じ表示・機能です。
+
+- PMX / FBX / OBJ のようにテクスチャが別ファイルのモデルや、外部ファイルを参照する `.gltf` は、
+  **フォルダごとドロップ** (または「フォルダを開く」) してください。GLB / VRM は1ファイルで開けます
+- デスクトップ版にしかない機能: ファイルの関連付け (ダブルクリックで開く)
+
+## インストール (デスクトップ版)
 
 [Releases](https://github.com/masaka1024/facetgl/releases) から `FacetGL_x.y.z_x64-setup.exe` をダウンロードして実行してください。
 

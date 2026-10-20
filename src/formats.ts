@@ -10,7 +10,7 @@ import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { TGALoader } from 'three/addons/loaders/TGALoader.js';
 import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
-import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { assetUrl, fileSize, listFiles, readFile, resolveUrl } from './platform';
 import { renderInfoPanel, renderSceneInfoPanel, type ModelSource } from './info';
 import { applyMmdShading, buildMmdExtrasMaterials, type MmdExtrasMaterials } from './mmdShading';
 
@@ -84,30 +84,17 @@ export function loadModelFile(path: string, ctx: LoaderContext): Promise<LoadedM
   }
 }
 
-// --- File access ---
-
-function readFile(path: string) {
-  return invoke<ArrayBuffer>('read_file', { path });
-}
-
-function fileSize(path: string) {
-  return invoke<number>('file_size', { path });
-}
+// --- File access (desktop or web, see platform.ts) ---
 
 function splitPath(path: string) {
   const fileName = path.split(/[\\/]/).pop() ?? path;
   return { fileName, dir: path.slice(0, path.length - fileName.length - 1) };
 }
 
+// Uses the separator of the folder path (Windows paths on desktop, "/" on the web)
 function joinPath(dir: string, relative: string) {
-  return dir + '\\' + relative.replace(/\//g, '\\');
-}
-
-// URL served by Tauri's asset protocol. Each path segment is encoded separately so that
-// loaders can resolve textures relative to the model ("tex/body.png" -> same folder).
-function assetUrl(path: string) {
-  const base = convertFileSrc('');
-  return base + path.replace(/\\/g, '/').split('/').map(encodeURIComponent).join('/');
+  const separator = dir.includes('\\') ? '\\' : '/';
+  return dir + separator + relative.replace(/[\\/]/g, separator);
 }
 
 function assetDirUrl(path: string) {
@@ -122,7 +109,7 @@ interface FolderIndex {
 }
 
 async function indexFolder(path: string): Promise<FolderIndex> {
-  const list = await invoke<string[]>('list_files', { dir: splitPath(path).dir });
+  const list = await listFiles(splitPath(path).dir);
   const byName = new Map<string, string>();
   // Shallow paths first so a file next to the model wins over one in a subfolder
   for (const rel of [...list].sort((a, b) => a.split('/').length - b.split('/').length)) {
@@ -138,7 +125,7 @@ function textureManager(path: string, index: FolderIndex, failedFiles: string[])
   const dirUrl = assetDirUrl(path);
   const manager = new THREE.LoadingManager();
   trackFailures(manager, failedFiles, urlFileName);
-  manager.setURLModifier((url) => {
+  const redirect = (url: string) => {
     if (!url.startsWith(dirUrl)) return url;
     let rel = url.slice(dirUrl.length);
     try {
@@ -150,7 +137,8 @@ function textureManager(path: string, index: FolderIndex, failedFiles: string[])
     if (index.files.has(rel.toLowerCase())) return url;
     const found = index.byName.get(rel.split('/').pop()!.toLowerCase());
     return found ? dirUrl + found.split('/').map(encodeURIComponent).join('/') : url;
-  });
+  };
+  manager.setURLModifier((url) => resolveUrl(redirect(url)));
   manager.addHandler(/\.tga$/i, new TGALoader(manager));
   return manager;
 }

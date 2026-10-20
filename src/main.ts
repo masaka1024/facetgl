@@ -4,12 +4,11 @@ import { DRACOLoader } from 'three/addons/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/addons/loaders/KTX2Loader.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
-import { invoke } from '@tauri-apps/api/core';
-import { getCurrentWebview } from '@tauri-apps/api/webview';
-import { getCurrentWindow } from '@tauri-apps/api/window';
-import { open, message } from '@tauri-apps/plugin-dialog';
 import { updateRenderStats } from './info';
-import { FORMATS, MODEL_EXTENSIONS, fileExtension, loadModelFile, type LoadedModel } from './formats';
+import { FORMATS, MODEL_EXTENSIONS, loadModelFile, type LoadedModel } from './formats';
+import {
+  isTauri, onModelDrop, pickModelFile, pickModelFolder, setWindowTitle, showError, startupFile,
+} from './platform';
 import { CameraRig } from './cameraRig';
 import { loadViewSettings, setupViewSettingsPanel, type ViewSettings } from './viewSettings';
 
@@ -86,14 +85,19 @@ function init() {
   scene.add(dirLight);
   scene.add(dirLight.target);
 
-  // 7. Compressed glTF support (decoders are served from public/libs)
-  dracoLoader = new DRACOLoader().setDecoderPath('/libs/draco/');
-  ktx2Loader = new KTX2Loader().setTranscoderPath('/libs/basis/').detectSupport(renderer);
+  // 7. Compressed glTF support (decoders are served from public/libs; BASE_URL keeps the
+  //    path relative so the same build works in the app and under GitHub Pages' sub-path)
+  dracoLoader = new DRACOLoader().setDecoderPath(`${import.meta.env.BASE_URL}libs/draco/`);
+  ktx2Loader = new KTX2Loader().setTranscoderPath(`${import.meta.env.BASE_URL}libs/basis/`).detectSupport(renderer);
 
   // 8. Event Listeners
   window.addEventListener('resize', onWindowResize);
 
+  document.body.classList.toggle('web', !isTauri);
   document.getElementById('open-button')!.addEventListener('click', openFileDialog);
+  document.getElementById('open-folder-button')!.addEventListener('click', async () => {
+    openModel(await pickModelFolder(MODEL_EXTENSIONS));
+  });
   window.addEventListener('keydown', (e) => {
     if (e.ctrlKey && e.key.toLowerCase() === 'o') {
       e.preventDefault();
@@ -121,46 +125,27 @@ function init() {
   document.getElementById('mmd-button')!.addEventListener('click', toggleMmdExtras);
   setupAnimationControls();
 
-  // Native drag and drop (Tauri delivers real file paths)
-  const body = document.body;
-  getCurrentWebview().onDragDropEvent((event) => {
-    const payload = event.payload;
-    if (payload.type === 'enter' || payload.type === 'over') {
-      body.classList.add('dragover');
-    } else if (payload.type === 'leave') {
-      body.classList.remove('dragover');
-    } else if (payload.type === 'drop') {
-      body.classList.remove('dragover');
-      const modelPath = payload.paths.find(isModelPath);
-      if (modelPath) {
-        loadModel(modelPath);
-      } else {
-        showError(`対応している形式のファイルをドロップしてください。\n(${MODEL_EXTENSIONS.join(', ')})`);
-      }
-    }
+  // Drag and drop (files, or a whole folder on the web)
+  onModelDrop(MODEL_EXTENSIONS, {
+    enter: () => document.body.classList.add('dragover'),
+    leave: () => document.body.classList.remove('dragover'),
+    drop: openModel,
   });
 
   // File passed on launch (file association / "Open with")
-  invoke<string | null>('startup_file').then((path) => {
+  startupFile().then((path) => {
     if (path) loadModel(path);
   });
 }
 
-function isModelPath(path: string) {
-  return MODEL_EXTENSIONS.includes(fileExtension(path));
-}
-
 async function openFileDialog() {
-  const path = await open({
-    multiple: false,
-    directory: false,
-    filters: [{ name: '対応しているすべての形式', extensions: MODEL_EXTENSIONS }, ...FORMATS],
-  });
-  if (path) loadModel(path);
+  const filters = [{ name: '対応しているすべての形式', extensions: MODEL_EXTENSIONS }, ...FORMATS];
+  openModel(await pickModelFile(filters, MODEL_EXTENSIONS));
 }
 
-function showError(text: string) {
-  message(text, { title: 'FacetGL', kind: 'error' });
+function openModel(path: string | null) {
+  if (path) loadModel(path);
+  else showError(`対応している形式のファイルが見つかりませんでした。\n(${MODEL_EXTENSIONS.join(', ')})`);
 }
 
 async function loadModel(path: string) {
@@ -207,7 +192,7 @@ async function loadModel(path: string) {
     document.body.classList.add('loaded');
     info.textContent = fileName;
     shownFailedCount = 0;
-    getCurrentWindow().setTitle(`${fileName} - FacetGL`);
+    setWindowTitle(`${fileName} - FacetGL`);
     console.log('Model loaded:', path);
   } catch (error) {
     console.error('Error loading model:', error);
