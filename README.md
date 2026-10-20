@@ -7,6 +7,10 @@ glTF / GLB を中心に、VRM・MMD (PMX/PMD)・FBX・OBJ・STL を開ける Win
 built with Tauri and three.js. It reproduces MMD's own shading for PMX files and for glTF
 files converted by [mmd2gltf](https://github.com/masaka1024/mmd2gltf-gui).*
 
+![外部の .bin / テクスチャを参照する .gltf を開き、情報パネルを表示したところ](docs/screenshots/info-panel.png)
+
+![アニメーション付きの GLB を再生しているところ](docs/screenshots/animation.png)
+
 ## 特徴
 
 - **ドラッグ＆ドロップ / 「開く」 / ダブルクリック** でモデルを開く (`.glb` `.gltf` `.vrm` を関連付け)
@@ -80,3 +84,11 @@ npm run tauri build   # インストーラーを作成 (src-tauri/target/release
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
 
 表示するモデルの利用条件は、各モデルの配布元の規約に従ってください。
+
+### スクリーンショットのモデル
+
+[Khronos glTF Sample Assets](https://github.com/KhronosGroup/glTF-Sample-Assets) のモデルを使用しています。
+
+- **FlightHelmet** — © 2018, Public. [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/)
+- **Fox** — © 2014, tomkranis; glTF conversion © 2017, @AsoboStudio and @scurest.
+  [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/)
