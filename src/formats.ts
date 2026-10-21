@@ -104,7 +104,7 @@ function assetDirUrl(path: string) {
 // --- Texture lookup for formats that reference textures by file name ---
 
 interface FolderIndex {
-  known: Set<string>;               // every file found (URL keys, see urlKey)
+  known: Map<string, string>;       // every file found: URL key (see urlKey) -> its real URL
   byName: Map<string, string>;      // file name (lower case) -> URL of the nearest such file
 }
 
@@ -131,14 +131,14 @@ function urlKey(url: string) {
 async function indexFolder(path: string): Promise<FolderIndex> {
   const roots = await textureSearchRoots(splitPath(path).dir);
   const lists = await Promise.all(roots.map((root) => listFiles(root)));
-  const known = new Set<string>();
+  const known = new Map<string, string>();
   const byName = new Map<string, string>();
   roots.forEach((root, i) => {
     for (const rel of [...lists[i]].sort((a, b) => a.split('/').length - b.split('/').length)) {
       const url = assetUrl(joinPath(root, rel));
       const key = urlKey(url);
       if (known.has(key)) continue; // already found from a nearer folder
-      known.add(key);
+      known.set(key, url);
       const name = rel.split('/').pop()!.toLowerCase();
       if (!byName.has(name)) byName.set(name, url);
     }
@@ -146,9 +146,11 @@ async function indexFolder(path: string): Promise<FolderIndex> {
   return { known, byName };
 }
 
-// Models often point at textures that were moved (e.g. into "tex/" or a parent folder) or
-// at the author's absolute paths. Redirect a missing texture to the nearest file with the
-// same name.
+// Sends every texture to the URL of the real file:
+// - Paths written with "\\" (fine on Windows, but part of the file name on macOS), "..", or
+//   different upper/lower case are mapped to the file they mean.
+// - Textures that were moved (e.g. into "tex/" or a parent folder) or that point at the
+//   author's absolute paths go to the nearest file with the same name.
 function textureManager(index: FolderIndex, failedFiles: string[]) {
   const assetBase = assetUrl('');
   const manager = new THREE.LoadingManager();
@@ -156,8 +158,7 @@ function textureManager(index: FolderIndex, failedFiles: string[]) {
   const redirect = (url: string) => {
     if (!url.startsWith(assetBase)) return url;
     const key = urlKey(url);
-    if (index.known.has(key)) return url;
-    return index.byName.get(key.split('/').pop()!) ?? url;
+    return index.known.get(key) ?? index.byName.get(key.split('/').pop()!) ?? url;
   };
   manager.setURLModifier((url) => resolveUrl(redirect(url)));
   manager.addHandler(/\.tga$/i, new TGALoader(manager));
