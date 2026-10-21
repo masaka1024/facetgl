@@ -1,0 +1,88 @@
+# Builds the desktop apps:
+#   - Windows: installer (.exe, NSIS)
+#   - macOS:   Universal app (Apple Silicon + Intel) as a .dmg
+#
+# When it runs:
+# - Pull request: builds both to check that they still compile; the files are attached to the run.
+# - Push a tag like "v0.3.0": both files are added to the GitHub Release for that tag
+#   (a draft release is created if there is none yet).
+# - Manual run ("Run workflow" on the Actions tab): builds both. If "release_tag" is filled in
+#   (e.g. v0.2.0), the files are also added to that existing release.
+name: Build desktop apps
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Add the files to this release (e.g. v0.2.0). Leave empty to only build.'
+        required: false
+        default: ''
+  pull_request:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows
+            os: windows-latest
+            rust_targets: ''
+            build_args: ''
+            bundle: src-tauri/target/release/bundle/nsis/*.exe
+          - name: macOS
+            os: macos-latest
+            rust_targets: aarch64-apple-darwin,x86_64-apple-darwin
+            build_args: --target universal-apple-darwin
+            bundle: src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+
+    name: Build (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    env:
+      # Tag builds: the pushed tag. Manual runs: the release_tag input (may be empty).
+      RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_targets }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.name }}
+
+      - run: npm ci
+
+      - name: Build app
+        shell: bash
+        run: npm run tauri build -- ${{ matrix.build_args }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: FacetGL-${{ matrix.name }}
+          path: ${{ matrix.bundle }}
+
+      - name: Add to release
+        if: env.RELEASE_TAG != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Both jobs may get here at the same time; whichever is second just finds the release.
+          gh release view "$RELEASE_TAG" >/dev/null 2>&1 \
+            || gh release create "$RELEASE_TAG" --draft --title "$RELEASE_TAG" --notes "" \
+            || gh release view "$RELEASE_TAG" >/dev/null
+          gh release upload "$RELEASE_TAG" ${{ matrix.bundle }} --clobber
