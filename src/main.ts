@@ -7,7 +7,7 @@ import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { updateRenderStats } from './info';
 import { FORMATS, MODEL_EXTENSIONS, loadModelFile, type LoadedModel } from './formats';
 import {
-  isTauri, onModelDrop, pickModelFile, pickModelFolder, setWindowTitle, showError, startupFile,
+  isMac, isTauri, onModelDrop, onOpenFile, pickModelFile, pickModelFolder, setWindowTitle, showError, startupFile,
 } from './platform';
 import { CameraRig } from './cameraRig';
 import { loadViewSettings, setupViewSettingsPanel, type ViewSettings } from './viewSettings';
@@ -94,12 +94,14 @@ function init() {
   window.addEventListener('resize', onWindowResize);
 
   document.body.classList.toggle('web', !isTauri);
-  document.getElementById('open-button')!.addEventListener('click', openFileDialog);
+  const openButton = document.getElementById('open-button')!;
+  if (isMac) openButton.title = '⌘O';
+  openButton.addEventListener('click', openFileDialog);
   document.getElementById('open-folder-button')!.addEventListener('click', async () => {
     openModel(await pickModelFolder(MODEL_EXTENSIONS));
   });
   window.addEventListener('keydown', (e) => {
-    if (e.ctrlKey && e.key.toLowerCase() === 'o') {
+    if ((isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === 'o') {
       e.preventDefault();
       openFileDialog();
     } else if (e.target instanceof HTMLElement && e.target.matches('input, select')) {
@@ -132,10 +134,13 @@ function init() {
     drop: openModel,
   });
 
-  // File passed on launch (file association / "Open with")
-  startupFile().then((path) => {
-    if (path) loadModel(path);
-  });
+  // File passed on launch (file association / "Open with"), and files the OS sends
+  // to the running app later (macOS). The listener is set up first so nothing is missed.
+  onOpenFile(loadModel)
+    .then(() => startupFile())
+    .then((path) => {
+      if (path) loadModel(path);
+    });
 }
 
 async function openFileDialog() {
