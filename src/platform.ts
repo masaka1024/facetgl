@@ -141,8 +141,24 @@ export async function pickModelFile(filters: { name: string; extensions: string[
   return pickWebFiles(extensions, false);
 }
 
-export function pickModelFolder(extensions: string[]) {
+export async function pickModelFolder(extensions: string[]) {
+  if (isTauri) {
+    const dir = await open({ multiple: false, directory: true });
+    return typeof dir === 'string' ? chooseModel(await expandFolders([dir]), extensions) : null;
+  }
   return pickWebFiles(extensions, true);
+}
+
+// Desktop: replaces each folder in the list with the files inside it (3 levels deep).
+// A plain file lists as empty and is kept as it is.
+async function expandFolders(paths: string[]) {
+  const out: string[] = [];
+  for (const path of paths) {
+    const inside = await listFiles(path);
+    if (inside.length === 0) out.push(path);
+    else out.push(...inside.map((rel) => `${path.replace(/[\\/]+$/, '')}/${rel}`));
+  }
+  return out;
 }
 
 export const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform || navigator.userAgent);
@@ -175,7 +191,8 @@ export function onModelDrop(extensions: string[], handlers: DropHandlers) {
       else if (payload.type === 'leave') handlers.leave();
       else if (payload.type === 'drop') {
         handlers.leave();
-        handlers.drop(chooseModel(payload.paths, extensions));
+        // A dropped folder (e.g. a PMX with its textures) is searched for the model
+        expandFolders(payload.paths).then((paths) => handlers.drop(chooseModel(paths, extensions)));
       }
     });
     return;
