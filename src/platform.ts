@@ -7,6 +7,7 @@
 //      virtual URLs that are mapped to blob URLs, so relative texture paths still resolve.
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
+import { homeDir } from '@tauri-apps/api/path';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open, message } from '@tauri-apps/plugin-dialog';
@@ -69,6 +70,37 @@ export function listFiles(dir: string): Promise<string[]> {
   return Promise.resolve(
     [...webEntries.entries()].filter(([key]) => key.startsWith(prefix)).map(([, e]) => e.path.slice(prefix.length)),
   );
+}
+
+// Folders to search for a model's textures: the model's own folder, then up to `levels`
+// parent folders (nearest first). Never climbs to the home folder or the top of a drive,
+// so that the whole disk (and macOS-protected folders like Documents) is not scanned.
+export async function textureSearchRoots(modelDir: string, levels = 3) {
+  const trim = (p: string) => p.replace(/[\\/]+$/, '');
+  const same = (a: string, b: string) => trim(a).replace(/\\/g, '/').toLowerCase() === trim(b).replace(/\\/g, '/').toLowerCase();
+  let home = '';
+  if (isTauri) {
+    try {
+      home = await homeDir();
+    } catch {
+      // Unknown home folder: the top-of-drive check below still applies
+    }
+  }
+  const roots = [modelDir];
+  let dir = trim(modelDir);
+  for (let i = 0; i < levels; i++) {
+    const cut = Math.max(dir.lastIndexOf('/'), dir.lastIndexOf('\\'));
+    if (cut <= 0) break;
+    const parent = dir.slice(0, cut);
+    // Stop below folders that hold whole disks or all users: "/Users", "/Volumes", "C:\\Users",
+    // and on the web the "web" root of the dropped files
+    const segments = parent.split(/[\\/]/).filter(Boolean);
+    const depth = segments.length - (/^[A-Za-z]:$/.test(segments[0] ?? '') ? 1 : 0);
+    if (depth <= 1 || (home && same(parent, home))) break;
+    roots.push(parent);
+    dir = parent;
+  }
+  return roots;
 }
 
 // URL for a file. Each path segment is encoded separately so that loaders can resolve

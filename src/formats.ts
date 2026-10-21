@@ -10,7 +10,7 @@ import { MTLLoader } from 'three/addons/loaders/MTLLoader.js';
 import { STLLoader } from 'three/addons/loaders/STLLoader.js';
 import { TGALoader } from 'three/addons/loaders/TGALoader.js';
 import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
-import { assetUrl, fileSize, listFiles, readFile, resolveUrl } from './platform';
+import { assetUrl, fileSize, listFiles, readFile, resolveUrl, textureSearchRoots } from './platform';
 import { renderInfoPanel, renderSceneInfoPanel, type ModelSource } from './info';
 import { applyMmdShading, buildMmdExtrasMaterials, type MmdExtrasMaterials } from './mmdShading';
 
@@ -104,39 +104,60 @@ function assetDirUrl(path: string) {
 // --- Texture lookup for formats that reference textures by file name ---
 
 interface FolderIndex {
-  files: Set<string>;               // relative paths, lower case
-  byName: Map<string, string>;      // file name (lower case) -> relative path
+  known: Set<string>;               // every file found (URL keys, see urlKey)
+  byName: Map<string, string>;      // file name (lower case) -> URL of the nearest such file
 }
 
-async function indexFolder(path: string): Promise<FolderIndex> {
-  const list = await listFiles(splitPath(path).dir);
-  const byName = new Map<string, string>();
-  // Shallow paths first so a file next to the model wins over one in a subfolder
-  for (const rel of [...list].sort((a, b) => a.split('/').length - b.split('/').length)) {
-    const name = rel.split('/').pop()!.toLowerCase();
-    if (!byName.has(name)) byName.set(name, rel);
+// Compares file URLs however a model spells them: decoded, "/" separators, "." / ".."
+// resolved, case-insensitive
+function urlKey(url: string) {
+  let path = url;
+  try {
+    path = decodeURIComponent(new URL(url).pathname);
+  } catch {
+    // Keep the raw string if it is not a valid URL or contains a stray "%"
   }
-  return { files: new Set(list.map((f) => f.toLowerCase())), byName };
+  const out: string[] = [];
+  for (const part of path.replace(/\\/g, '/').split('/')) {
+    if (part === '' || part === '.') continue;
+    if (part === '..') out.pop();
+    else out.push(part);
+  }
+  return out.join('/').toLowerCase();
 }
 
-// Models often point at textures that were moved (e.g. into "tex/") or at the author's
-// absolute paths. Redirect a missing texture to a file with the same name in the folder.
-function textureManager(path: string, index: FolderIndex, failedFiles: string[]) {
-  const dirUrl = assetDirUrl(path);
+// Indexes the model's folder and up to 3 parent folders (each 3 levels deep).
+// Files nearer the model come first: its own folder, shallow before deep, then the parents.
+async function indexFolder(path: string): Promise<FolderIndex> {
+  const roots = await textureSearchRoots(splitPath(path).dir);
+  const lists = await Promise.all(roots.map((root) => listFiles(root)));
+  const known = new Set<string>();
+  const byName = new Map<string, string>();
+  roots.forEach((root, i) => {
+    for (const rel of [...lists[i]].sort((a, b) => a.split('/').length - b.split('/').length)) {
+      const url = assetUrl(joinPath(root, rel));
+      const key = urlKey(url);
+      if (known.has(key)) continue; // already found from a nearer folder
+      known.add(key);
+      const name = rel.split('/').pop()!.toLowerCase();
+      if (!byName.has(name)) byName.set(name, url);
+    }
+  });
+  return { known, byName };
+}
+
+// Models often point at textures that were moved (e.g. into "tex/" or a parent folder) or
+// at the author's absolute paths. Redirect a missing texture to the nearest file with the
+// same name.
+function textureManager(index: FolderIndex, failedFiles: string[]) {
+  const assetBase = assetUrl('');
   const manager = new THREE.LoadingManager();
   trackFailures(manager, failedFiles, urlFileName);
   const redirect = (url: string) => {
-    if (!url.startsWith(dirUrl)) return url;
-    let rel = url.slice(dirUrl.length);
-    try {
-      rel = decodeURIComponent(rel);
-    } catch {
-      // Keep the raw string if it contains a stray "%"
-    }
-    rel = rel.replace(/\\/g, '/');
-    if (index.files.has(rel.toLowerCase())) return url;
-    const found = index.byName.get(rel.split('/').pop()!.toLowerCase());
-    return found ? dirUrl + found.split('/').map(encodeURIComponent).join('/') : url;
+    if (!url.startsWith(assetBase)) return url;
+    const key = urlKey(url);
+    if (index.known.has(key)) return url;
+    return index.byName.get(key.split('/').pop()!) ?? url;
   };
   manager.setURLModifier((url) => resolveUrl(redirect(url)));
   manager.addHandler(/\.tga$/i, new TGALoader(manager));
@@ -256,7 +277,7 @@ async function sceneModel(
 
 async function loadMmd(path: string): Promise<LoadedModel> {
   const failedFiles: string[] = [];
-  const manager = textureManager(path, await indexFolder(path), failedFiles);
+  const manager = textureManager(await indexFolder(path), failedFiles);
   const mesh = await new MMDLoader(manager).loadAsync(assetUrl(path));
   applyMmdShading(mesh);
   const model = await sceneModel(path, fileExtension(path) === 'pmd' ? 'PMD (MMD)' : 'PMX (MMD)', mesh, [], failedFiles);
@@ -267,7 +288,7 @@ async function loadFbx(path: string) {
   const failedFiles: string[] = [];
   const index = await indexFolder(path);
   const buffer = prepareFbx(await readFile(path), index);
-  const group = new FBXLoader(textureManager(path, index, failedFiles)).parse(buffer, assetDirUrl(path));
+  const group = new FBXLoader(textureManager(index, failedFiles)).parse(buffer, assetDirUrl(path));
   fixSelfIlluminatedMaterials(group);
   return sceneModel(path, 'FBX', group, group.animations, failedFiles);
 }
@@ -350,7 +371,7 @@ async function loadObj(path: string) {
   if (mtlName) {
     try {
       const dirUrl = assetDirUrl(path);
-      const manager = textureManager(path, await indexFolder(path), failedFiles);
+      const manager = textureManager(await indexFolder(path), failedFiles);
       const mtlLoader = new MTLLoader(manager).setPath(dirUrl).setResourcePath(dirUrl);
       const materials = await mtlLoader.loadAsync(mtlName.split(/[\\/]/).map(encodeURIComponent).join('/'));
       materials.preload();
