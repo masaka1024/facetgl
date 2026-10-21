@@ -118,7 +118,8 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin
 npm run tauri build -- --target universal-apple-darwin
 ```
 
-GitHub の Actions タブから「Build macOS app」を実行しても、Mac 版の `.dmg` を作れます。
+GitHub の Actions タブから「Build desktop apps」を実行すると、Windows 版の `.exe` と Mac 版の `.dmg` をまとめて作れます。
+`v0.3.0` のようなタグを付けると、両方がそのバージョンのリリースに自動で添付されます。
 
 ## ライセンス
 
