@@ -109,7 +109,7 @@ interface FolderIndex {
 }
 
 // Compares file URLs however a model spells them: decoded, "/" separators, "." / ".."
-// resolved, case-insensitive
+// resolved, Unicode-normalized, case-insensitive
 function urlKey(url: string) {
   let path = url;
   try {
@@ -123,7 +123,8 @@ function urlKey(url: string) {
     if (part === '..') out.pop();
     else out.push(part);
   }
-  return out.join('/').toLowerCase();
+  // macOS may give file names in decomposed form ("か" + "゛"), while models store "が"
+  return out.join('/').normalize('NFC').toLowerCase();
 }
 
 // Indexes the model's folder and up to 3 parent folders (each 3 levels deep).
@@ -139,7 +140,7 @@ async function indexFolder(path: string): Promise<FolderIndex> {
       const key = urlKey(url);
       if (known.has(key)) continue; // already found from a nearer folder
       known.set(key, url);
-      const name = rel.split('/').pop()!.toLowerCase();
+      const name = rel.split('/').pop()!.normalize('NFC').toLowerCase();
       if (!byName.has(name)) byName.set(name, url);
     }
   });
