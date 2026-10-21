@@ -6,6 +6,7 @@
 //      file system addressed by paths like "web/Model/model.pmx". Loaders fetch them through
 //      virtual URLs that are mapped to blob URLs, so relative texture paths still resolve.
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open, message } from '@tauri-apps/plugin-dialog';
@@ -144,8 +145,17 @@ export function pickModelFolder(extensions: string[]) {
   return pickWebFiles(extensions, true);
 }
 
+export const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform || navigator.userAgent);
+
 export async function startupFile() {
   return isTauri ? invoke<string | null>('startup_file') : null;
+}
+
+// Files the OS asks the running app to open (macOS: Finder double-click, "Open With", Dock).
+// Register this before calling startupFile() so that no file is missed in between.
+export async function onOpenFile(handler: (path: string) => void) {
+  if (!isTauri) return;
+  await listen<string>('open-file', (event) => handler(event.payload));
 }
 
 // --- Drag and drop ---

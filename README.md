@@ -1,6 +1,6 @@
 # FacetGL
 
-glTF / GLB を中心に、VRM・MMD (PMX/PMD)・FBX・OBJ・STL を開ける Windows 向けの 3D モデルビューアです。
+glTF / GLB を中心に、VRM・MMD (PMX/PMD)・FBX・OBJ・STL を開ける Windows / macOS 向けの 3D モデルビューアです。
 [Tauri](https://tauri.app/) と [three.js](https://threejs.org/) で作られています。
 
 *A lightweight desktop 3D model viewer for glTF / GLB, VRM, MMD (PMX/PMD), FBX, OBJ and STL,
@@ -50,15 +50,31 @@ files converted by [mmd2gltf](https://github.com/masaka1024/mmd2gltf-gui).*
 
 [Releases](https://github.com/masaka1024/facetgl/releases) から `FacetGL_x.y.z_x64-setup.exe` をダウンロードして実行してください。
 
+### Windows
+
 電子署名をしていないため、初回は「Windows によって PC が保護されました」と表示されることがあります。
 「詳細情報」→「実行」で進めてください。
+
+### macOS (11 Big Sur 以降、Apple Silicon / Intel 共通)
+
+1. [Releases](https://github.com/masaka1024/facetgl/releases) から `FacetGL_x.y.z_universal.dmg` をダウンロードして開きます
+2. `FacetGL` を「アプリケーション」フォルダへドラッグします
+3. Apple の公証 (Notarization) を受けていないため、初回は「開けません」と表示されます。
+   一度ダイアログを閉じてから **システム設定 → プライバシーとセキュリティ** を開き、
+   下のほうに出る「FacetGL」の **「このまま開く」** を押してください (2回目以降はそのまま起動できます)
+
+うまくいかない場合は、ターミナルで次を実行してから開いてください。
+
+```sh
+xattr -dr com.apple.quarantine /Applications/FacetGL.app
+```
 
 ## 操作
 
 | 操作 | 内容 |
 |---|---|
 | 左ドラッグ / 右ドラッグ / ホイール | 回転 / 平行移動 / ズーム |
-| `Ctrl+O` | ファイルを開く |
+| `Ctrl+O` (Mac は `⌘O`) | ファイルを開く |
 | `Space` | アニメーションの再生 / 一時停止 |
 | `I` | 情報パネルの表示 / 非表示 |
 | `P` | 透視 / 平行投影の切り替え |
@@ -82,14 +98,27 @@ color = color × トゥーン(N·L) + スペキュラ × ライト色 × pow(N·
 
 ## ソースからビルド
 
-必要なもの: [Node.js](https://nodejs.org/) 18 以降、[Rust](https://rustup.rs/)、
-Visual Studio Build Tools (C++)、WebView2 (Windows 10/11 は標準搭載)
+必要なもの: [Node.js](https://nodejs.org/) 18 以降、[Rust](https://rustup.rs/)、および
+
+- Windows: Visual Studio Build Tools (C++)、WebView2 (Windows 10/11 は標準搭載)
+- macOS: Xcode Command Line Tools (`xcode-select --install`)
 
 ```sh
 npm install
 npm run tauri dev     # 開発用に起動
-npm run tauri build   # インストーラーを作成 (src-tauri/target/release/bundle/nsis/)
+npm run tauri build   # インストーラーを作成
+                      #   Windows: src-tauri/target/release/bundle/nsis/
+                      #   macOS:   src-tauri/target/release/bundle/dmg/ (と macos/FacetGL.app)
 ```
+
+Apple Silicon と Intel の両方で動く Mac 版 (Universal) を作るには:
+
+```sh
+rustup target add aarch64-apple-darwin x86_64-apple-darwin
+npm run tauri build -- --target universal-apple-darwin
+```
+
+GitHub の Actions タブから「Build macOS app」を実行しても、Mac 版の `.dmg` を作れます。
 
 ## ライセンス
 
