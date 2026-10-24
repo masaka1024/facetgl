@@ -42,6 +42,9 @@ export interface LoadedModel {
   style?: 'mmd';
   // glTF converted from PMX with extras.mmd (mmd2gltf): MMD materials that can be toggled
   mmdExtras?: MmdExtrasMaterials;
+  // PMX: the raw file, read again when physics is turned on (the physics engine parses the
+  // rigid bodies and joints itself, in MMD's own coordinates)
+  pmxSource?: () => Promise<ArrayBuffer>;
 }
 
 function trackFailures(manager: THREE.LoadingManager, failedFiles: string[], nameOf: (url: string) => string) {
@@ -282,8 +285,9 @@ async function loadMmd(path: string): Promise<LoadedModel> {
   const manager = textureManager(await indexFolder(path), failedFiles);
   const mesh = await new MMDLoader(manager).loadAsync(assetUrl(path));
   applyMmdShading(mesh);
-  const model = await sceneModel(path, fileExtension(path) === 'pmd' ? 'PMD (MMD)' : 'PMX (MMD)', mesh, [], failedFiles);
-  return { ...model, style: 'mmd' };
+  const isPmx = fileExtension(path) === 'pmx';
+  const model = await sceneModel(path, isPmx ? 'PMX (MMD)' : 'PMD (MMD)', mesh, [], failedFiles);
+  return { ...model, style: 'mmd', pmxSource: isPmx ? () => readFile(path) : undefined };
 }
 
 async function loadFbx(path: string) {

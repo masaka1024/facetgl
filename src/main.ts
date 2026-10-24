@@ -215,7 +215,7 @@ async function loadModel(path: string) {
     mmdExtrasEnabled = !!loaded.mmdExtras;
     document.body.classList.toggle('has-mmd-extras', !!loaded.mmdExtras);
     updateMmdButton();
-    document.body.classList.toggle('has-physics', !!physicsMesh(currentModel));
+    document.body.classList.toggle('has-physics', !!physicsMesh(currentLoaded));
     updatePhysicsButton();
     fitCameraToModel(currentModel);
     setupAnimations(currentModel, loaded.animations);
@@ -387,7 +387,7 @@ function updateMmdButton() {
   button.textContent = mmdExtrasEnabled ? 'MMD表示: ON' : 'MMD表示: OFF';
 }
 
-// --- Physics (PMX / PMD rigid bodies, see physics.ts) ---
+// --- Physics (PMX rigid bodies, see physics.ts) ---
 
 async function togglePhysics() {
   if (physics) {
@@ -395,14 +395,14 @@ async function togglePhysics() {
     updatePhysicsButton();
     return;
   }
-  const mesh = physicsMesh(currentModel);
-  if (!mesh || physicsStarting) return;
+  const loaded = currentLoaded;
+  if (!physicsMesh(loaded) || physicsStarting) return;
   physicsStarting = true;
   updatePhysicsButton();
   try {
-    const created = await ModelPhysics.create(mesh);
-    if (currentModel === mesh) physics = created;
-    else created.dispose(); // another model was opened while ammo.js was loading
+    const created = await ModelPhysics.create(loaded!);
+    if (currentLoaded === loaded) physics = created;
+    else created.dispose(); // another model was opened while the PMX was being read
   } catch (error) {
     console.error('Error starting physics:', error);
     showError(`物理演算を開始できませんでした。\n\n${error}`);
