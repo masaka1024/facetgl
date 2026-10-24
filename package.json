@@ -1,7 +1,7 @@
 {
   "name": "facetgl",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Desktop 3D model viewer (glTF / GLB / VRM / PMX / FBX / OBJ / STL) built with Tauri and three.js",
   "license": "MIT",
   "repository": {
