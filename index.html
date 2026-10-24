@@ -74,6 +74,19 @@
         #mmd-button.active { background: #3a2a40; border-color: #b07ad0; color: #f0d8ff; }
         #info-panel .comment { white-space: pre-wrap; color: #aaa; margin: 4px 0 8px; font-size: 0.75rem; }
 
+        /* Physics (PMX / PMD rigid bodies) */
+        #physics-button, #physics-reset { display: none; }
+        body.loaded.has-physics #physics-button { display: inline-block; }
+        body.loaded.has-physics.physics-on #physics-reset { display: inline-block; }
+        #physics-button.active { background: #20402a; border-color: #5c9; color: #d8ffe6; }
+        #physics-hint {
+            position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 15;
+            color: #777; font-size: 0.75rem; pointer-events: none; display: none;
+        }
+        body.loaded.has-physics.physics-on #physics-hint { display: block; }
+        body.loaded.has-animation #physics-hint { bottom: 60px; }
+        body.dragging-model, body.dragging-model canvas { cursor: grabbing; }
+
         /* 表示設定 popover */
         #view-button.active { background: #3a3a3a; color: #fff; }
         #view-panel {
@@ -122,6 +135,8 @@
         <button id="info-button" title="I">情報</button>
         <button id="view-button">表示設定</button>
         <button id="mmd-button" title="extras.mmd（PMX の材質情報）を検出しました。クリックで MMD 表示と glTF 標準表示を切り替えます">MMD表示: ON</button>
+        <button id="physics-button" title="F: 髪やスカートの剛体を物理演算で動かします (試験機能)">物理: OFF</button>
+        <button id="physics-reset" title="R: 姿勢を初期状態に戻して物理をやり直します">物理リセット</button>
         <div id="info">FacetGL</div>
     </div>
     <div id="view-panel">
@@ -145,6 +160,7 @@
         <button id="view-reset">初期値に戻す</button>
     </div>
     <div id="info-panel"></div>
+    <div id="physics-hint"></div>
     <div id="anim-bar">
         <button id="anim-play" title="Space">▶</button>
         <select id="anim-clip"></select>
