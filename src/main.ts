@@ -8,10 +8,12 @@ import { updateRenderStats } from './info';
 import { FORMATS, MODEL_EXTENSIONS, loadModelFile, type LoadedModel } from './formats';
 import {
   isMac, isTauri, onModelDrop, onOpenFile, pickModelFile, pickModelFolder, setWindowTitle, showError, startupFile,
+  type PickedFiles,
 } from './platform';
 import { CameraRig } from './cameraRig';
 import { loadViewSettings, setupViewSettingsPanel, type ViewSettings } from './viewSettings';
-import { ModelPhysics, physicsMesh } from './physics';
+import { MAX_FRAME_TIME, ModelPhysics, physicsMesh } from './physics';
+import { MOTION_EXTENSIONS, MmdMotion, isMotionFile, motionTarget } from './motion';
 
 // --- Variables ---
 let scene: THREE.Scene;
@@ -47,6 +49,11 @@ let physics: ModelPhysics | null = null;
 let physicsStarting = false;
 let physicsTime = 0; // milliseconds spent in physics since the last stats refresh
 let physicsFrames = 0;
+
+// VMD motion of the current MMD model (motion.ts)
+let motion: MmdMotion | null = null;
+let motionLoading = false;
+let lastMotionTime = 0;
 // Alt (option) + drag moves the model to shake it; it springs back when released
 const modelDrag = {
   active: false,
@@ -114,7 +121,8 @@ function init() {
   if (isMac) openButton.title = '⌘O';
   openButton.addEventListener('click', openFileDialog);
   document.getElementById('open-folder-button')!.addEventListener('click', async () => {
-    openModel(await pickModelFolder(MODEL_EXTENSIONS));
+    const picked = await pickModelFolder(MODEL_EXTENSIONS);
+    if (picked) openModel(picked);
   });
   window.addEventListener('keydown', (e) => {
     if ((isMac ? e.metaKey : e.ctrlKey) && e.key.toLowerCase() === 'o') {
@@ -161,21 +169,65 @@ function init() {
 
   // File passed on launch (file association / "Open with"), and files the OS sends
   // to the running app later (macOS). The listener is set up first so nothing is missed.
-  onOpenFile(loadModel)
+  const openPath = (path: string) => openModel(isMotionFile(path) ? { model: null, motion: path } : { model: path, motion: null });
+  onOpenFile(openPath)
     .then(() => startupFile())
     .then((path) => {
-      if (path) loadModel(path);
+      if (path) openPath(path);
     });
 }
 
 async function openFileDialog() {
-  const filters = [{ name: '対応しているすべての形式', extensions: MODEL_EXTENSIONS }, ...FORMATS];
-  openModel(await pickModelFile(filters, MODEL_EXTENSIONS));
+  const filters = [
+    { name: '対応しているすべての形式', extensions: [...MODEL_EXTENSIONS, ...MOTION_EXTENSIONS] },
+    ...FORMATS,
+    { name: 'MMD モーション (VMD)', extensions: MOTION_EXTENSIONS },
+  ];
+  const picked = await pickModelFile(filters, MODEL_EXTENSIONS);
+  if (picked) openModel(picked);
 }
 
-function openModel(path: string | null) {
-  if (path) loadModel(path);
-  else showError(`対応している形式のファイルが見つかりませんでした。\n(${MODEL_EXTENSIONS.join(', ')})`);
+// A model, a motion for the open MMD model, or both (a folder with a PMX and a VMD)
+async function openModel(picked: PickedFiles | null) {
+  if (!picked) return;
+  if (picked.model) {
+    await loadModel(picked.model);
+    if (picked.motion && motionTarget(currentModel)) await loadMotion(picked.motion);
+  } else if (picked.motion) {
+    if (motionTarget(currentModel)) await loadMotion(picked.motion);
+    else showError('モーション (VMD) は、先に PMX / PMD モデルを開いてから読み込んでください。');
+  } else {
+    showError(`対応している形式のファイルが見つかりませんでした。\n(${[...MODEL_EXTENSIONS, ...MOTION_EXTENSIONS].join(', ')})`);
+  }
+}
+
+async function loadMotion(path: string) {
+  const mesh = motionTarget(currentModel);
+  if (!mesh || motionLoading) return;
+  motionLoading = true;
+  const info = document.getElementById('info')!;
+  const previousInfo = info.textContent;
+  const fileName = path.split(/[\\/]/).pop() ?? path;
+  info.textContent = `モーション読み込み中: ${fileName}`;
+  try {
+    const loaded = await MmdMotion.load(mesh, path);
+    if (currentModel !== mesh) {
+      loaded.dispose(); // another model was opened meanwhile
+      return;
+    }
+    motion?.dispose();
+    motion = loaded;
+    motion.setPhysicsEnabled(physics !== null);
+    useMotionInAnimationBar(motion);
+    physics?.realign(); // the bones jumped to the motion's first frame
+    info.textContent = previousInfo;
+  } catch (error) {
+    console.error('Error loading motion:', error);
+    info.textContent = previousInfo;
+    showError(`モーションの読み込みに失敗しました。\n${fileName}\n\n${error}`);
+  } finally {
+    motionLoading = false;
+  }
 }
 
 async function loadModel(path: string) {
@@ -310,8 +362,22 @@ function setupAnimations(model: THREE.Object3D, animations: THREE.AnimationClip[
   if (clips.length > 0) selectClip(0, true);
 }
 
+// A VMD motion takes over the animation bar (one clip, played through MMDAnimationHelper)
+function useMotionInAnimationBar(m: MmdMotion) {
+  mixer = m.mixer;
+  clips = [m.clip];
+  currentAction = m.action;
+  mixer.timeScale = Number((document.getElementById('anim-speed') as HTMLSelectElement).value);
+  const select = document.getElementById('anim-clip') as HTMLSelectElement;
+  select.replaceChildren(new Option(m.clip.name, '0'));
+  (document.getElementById('anim-seek') as HTMLInputElement).max = String(m.duration);
+  document.body.classList.add('has-animation');
+  lastMotionTime = m.action.time;
+  setPlaying(true);
+}
+
 function selectClip(index: number, play: boolean) {
-  if (!mixer) return;
+  if (!mixer || motion) return;
   currentAction?.stop();
   currentAction = mixer.clipAction(clips[index]);
   currentAction.play();
@@ -334,7 +400,13 @@ function togglePlay() {
 function setAnimationTime(time: number) {
   if (!mixer || !currentAction) return;
   currentAction.time = time;
-  mixer.update(0);
+  if (motion) {
+    motion.update(0);
+    lastMotionTime = time;
+    physics?.realign(); // the pose jumped: place the bodies around it
+  } else {
+    mixer.update(0);
+  }
 }
 
 function setupAnimationControls() {
@@ -401,7 +473,10 @@ async function togglePhysics() {
   updatePhysicsButton();
   try {
     const created = await ModelPhysics.create(loaded!);
-    if (currentLoaded === loaded) physics = created;
+    if (currentLoaded === loaded) {
+      physics = created;
+      motion?.setPhysicsEnabled(true);
+    }
     else created.dispose(); // another model was opened while the PMX was being read
   } catch (error) {
     console.error('Error starting physics:', error);
@@ -414,11 +489,15 @@ async function togglePhysics() {
 
 function stopPhysics() {
   if (!physics) return;
-  physics.dispose();
+  physics.dispose(!motion); // with a motion, the motion poses the bones again below
   physics = null;
   endModelDrag();
   modelDrag.offset.set(0, 0, 0);
   currentModel?.position.set(0, 0, 0);
+  if (motion) {
+    motion.setPhysicsEnabled(false);
+    motion.update(0); // hair and skirt bones back to the motion's own pose
+  }
 }
 
 function resetPhysics() {
@@ -426,7 +505,24 @@ function resetPhysics() {
   endModelDrag();
   modelDrag.offset.set(0, 0, 0);
   currentModel.position.set(0, 0, 0);
-  physics.reset();
+  if (motion) {
+    // Keep the motion's pose and start the physics over around it
+    motion.update(0);
+    physics.realign();
+  } else {
+    physics.reset();
+  }
+}
+
+// Plays the motion, then (in animate) physics runs on the posed bones
+function updateMotion(delta: number) {
+  if (!motion) return;
+  if (playing && !seeking) motion.update(delta);
+  // Looped back to the start: the pose jumps, so the bodies are placed again (MMD resets
+  // physics at the loop too)
+  const time = motion.action.time;
+  if (time < lastMotionTime - 1e-6 && !seeking) physics?.realign();
+  lastMotionTime = time;
 }
 
 function updatePhysicsButton(timeText = '') {
@@ -494,7 +590,7 @@ function updatePhysics(delta: number) {
   currentModel.position.copy(modelDrag.offset);
 
   const start = performance.now();
-  physics.update(Math.min(delta, 0.1)); // after a pause (hidden tab etc.) do not jump ahead
+  physics.update(Math.min(delta, MAX_FRAME_TIME)); // after a pause (hidden tab etc.) do not jump ahead
   physicsTime += performance.now() - start;
   physicsFrames++;
 }
@@ -503,6 +599,8 @@ function clearCurrentModel() {
   if (!currentModel) return;
 
   stopPhysics();
+  motion?.dispose();
+  motion = null;
   currentLoaded?.mmdExtras?.dispose();
 
   mixer?.stopAllAction();
@@ -605,7 +703,12 @@ function animate() {
   requestAnimationFrame(animate);
   const delta = clock.getDelta();
 
-  if (mixer && playing && !seeking) mixer.update(delta);
+  // With physics on, the motion advances exactly as far as the physics does. On a slow frame the
+  // physics catches up at most MAX_FRAME_TIME; if the motion went further, the bones would jump
+  // and kick the hair (the cause of the hair blow-ups found with the Unity importer). The motion
+  // plays a little slower on such a machine instead.
+  if (motion) updateMotion(physics ? Math.min(delta, MAX_FRAME_TIME) : delta);
+  else if (mixer && playing && !seeking) mixer.update(delta);
   // VRM spring bones / expressions
   currentLoaded?.update?.(delta);
   updatePhysics(delta);
