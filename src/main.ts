@@ -11,6 +11,7 @@ import {
 } from './platform';
 import { CameraRig } from './cameraRig';
 import { loadViewSettings, setupViewSettingsPanel, type ViewSettings } from './viewSettings';
+import { ModelPhysics, physicsMesh } from './physics';
 
 // --- Variables ---
 let scene: THREE.Scene;
@@ -40,6 +41,21 @@ let seeking = false;
 let statsElapsed = 0;
 let shownFailedCount = 0;
 let mmdExtrasEnabled = false;
+
+// Physics state (PMX / PMD only)
+let physics: ModelPhysics | null = null;
+let physicsStarting = false;
+let physicsTime = 0; // milliseconds spent in physics since the last stats refresh
+let physicsFrames = 0;
+// Alt (option) + drag moves the model to shake it; it springs back when released
+const modelDrag = {
+  active: false,
+  pointerId: -1,
+  plane: new THREE.Plane(),
+  start: new THREE.Vector3(),
+  startOffset: new THREE.Vector3(),
+  offset: new THREE.Vector3(),
+};
 
 // --- Initialization ---
 function init() {
@@ -113,6 +129,10 @@ function init() {
       toggleInfoPanel();
     } else if (e.key.toLowerCase() === 'p') {
       viewPanel.toggleProjection();
+    } else if (e.key.toLowerCase() === 'f') {
+      togglePhysics();
+    } else if (e.key.toLowerCase() === 'r') {
+      resetPhysics();
     }
   });
 
@@ -125,6 +145,11 @@ function init() {
 
   document.getElementById('info-button')!.addEventListener('click', toggleInfoPanel);
   document.getElementById('mmd-button')!.addEventListener('click', toggleMmdExtras);
+  document.getElementById('physics-button')!.addEventListener('click', togglePhysics);
+  document.getElementById('physics-reset')!.addEventListener('click', resetPhysics);
+  document.getElementById('physics-hint')!.textContent =
+    `${isMac ? 'option' : 'Alt'} + ドラッグでモデルを動かすと、髪やスカートが揺れます`;
+  setupModelDrag();
   setupAnimationControls();
 
   // Drag and drop (files, or a whole folder on the web)
@@ -190,6 +215,8 @@ async function loadModel(path: string) {
     mmdExtrasEnabled = !!loaded.mmdExtras;
     document.body.classList.toggle('has-mmd-extras', !!loaded.mmdExtras);
     updateMmdButton();
+    document.body.classList.toggle('has-physics', !!physicsMesh(currentLoaded));
+    updatePhysicsButton();
     fitCameraToModel(currentModel);
     setupAnimations(currentModel, loaded.animations);
     loaded.renderInfo(document.getElementById('info-panel')!);
@@ -360,9 +387,122 @@ function updateMmdButton() {
   button.textContent = mmdExtrasEnabled ? 'MMD表示: ON' : 'MMD表示: OFF';
 }
 
+// --- Physics (PMX rigid bodies, see physics.ts) ---
+
+async function togglePhysics() {
+  if (physics) {
+    stopPhysics();
+    updatePhysicsButton();
+    return;
+  }
+  const loaded = currentLoaded;
+  if (!physicsMesh(loaded) || physicsStarting) return;
+  physicsStarting = true;
+  updatePhysicsButton();
+  try {
+    const created = await ModelPhysics.create(loaded!);
+    if (currentLoaded === loaded) physics = created;
+    else created.dispose(); // another model was opened while the PMX was being read
+  } catch (error) {
+    console.error('Error starting physics:', error);
+    showError(`物理演算を開始できませんでした。\n\n${error}`);
+  } finally {
+    physicsStarting = false;
+    updatePhysicsButton();
+  }
+}
+
+function stopPhysics() {
+  if (!physics) return;
+  physics.dispose();
+  physics = null;
+  endModelDrag();
+  modelDrag.offset.set(0, 0, 0);
+  currentModel?.position.set(0, 0, 0);
+}
+
+function resetPhysics() {
+  if (!physics || !currentModel) return;
+  endModelDrag();
+  modelDrag.offset.set(0, 0, 0);
+  currentModel.position.set(0, 0, 0);
+  physics.reset();
+}
+
+function updatePhysicsButton(timeText = '') {
+  const button = document.getElementById('physics-button')!;
+  const on = physics !== null;
+  button.classList.toggle('active', on);
+  document.body.classList.toggle('physics-on', on);
+  button.textContent = physicsStarting ? '物理: 準備中…' : on ? `物理: ON${timeText}` : '物理: OFF';
+}
+
+function setupModelDrag() {
+  const canvas = renderer.domElement;
+  const raycaster = new THREE.Raycaster();
+  const hit = new THREE.Vector3();
+
+  const pointOnPlane = (e: PointerEvent) => {
+    const rect = canvas.getBoundingClientRect();
+    const ndc = new THREE.Vector2(
+      ((e.clientX - rect.left) / rect.width) * 2 - 1,
+      -((e.clientY - rect.top) / rect.height) * 2 + 1,
+    );
+    raycaster.setFromCamera(ndc, cameraRig.active);
+    return raycaster.ray.intersectPlane(modelDrag.plane, hit);
+  };
+
+  // Registered in the capture phase so that it runs before OrbitControls' own handler
+  canvas.addEventListener(
+    'pointerdown',
+    (e) => {
+      if (!physics || !currentModel || !e.altKey || e.button !== 0) return;
+      // Drag on a plane facing the camera through the orbit center
+      const normal = cameraRig.active.getWorldDirection(new THREE.Vector3());
+      modelDrag.plane.setFromNormalAndCoplanarPoint(normal, controls.target);
+      if (!pointOnPlane(e)) return;
+      modelDrag.active = true;
+      modelDrag.pointerId = e.pointerId;
+      modelDrag.start.copy(hit);
+      modelDrag.startOffset.copy(modelDrag.offset);
+      controls.enabled = false; // OrbitControls ignores this press
+      canvas.setPointerCapture(e.pointerId);
+      document.body.classList.add('dragging-model');
+      e.preventDefault();
+    },
+    { capture: true },
+  );
+  canvas.addEventListener('pointermove', (e) => {
+    if (!modelDrag.active || e.pointerId !== modelDrag.pointerId) return;
+    if (pointOnPlane(e)) modelDrag.offset.copy(modelDrag.startOffset).add(hit).sub(modelDrag.start);
+  });
+  canvas.addEventListener('pointerup', endModelDrag);
+  canvas.addEventListener('pointercancel', endModelDrag);
+}
+
+function endModelDrag() {
+  if (!modelDrag.active) return;
+  modelDrag.active = false;
+  controls.enabled = true;
+  document.body.classList.remove('dragging-model');
+}
+
+function updatePhysics(delta: number) {
+  if (!physics || !currentModel) return;
+  // While dragged the model follows the pointer; afterwards it springs back to where it was
+  if (!modelDrag.active) modelDrag.offset.multiplyScalar(Math.exp(-delta * 8));
+  currentModel.position.copy(modelDrag.offset);
+
+  const start = performance.now();
+  physics.update(Math.min(delta, 0.1)); // after a pause (hidden tab etc.) do not jump ahead
+  physicsTime += performance.now() - start;
+  physicsFrames++;
+}
+
 function clearCurrentModel() {
   if (!currentModel) return;
 
+  stopPhysics();
   currentLoaded?.mmdExtras?.dispose();
 
   mixer?.stopAllAction();
@@ -468,6 +608,7 @@ function animate() {
   if (mixer && playing && !seeking) mixer.update(delta);
   // VRM spring bones / expressions
   currentLoaded?.update?.(delta);
+  updatePhysics(delta);
   updateAnimationUI();
 
   controls.update();
@@ -481,6 +622,12 @@ function animate() {
     statsElapsed = 0;
     if (document.body.classList.contains('show-info')) updateRenderStats(renderer);
     updateFailedNotice();
+    // Average physics time per frame, shown on the button (how heavy the model is)
+    if (physics && physicsFrames > 0) {
+      updatePhysicsButton(` (${(physicsTime / physicsFrames).toFixed(1)} ms)`);
+      physicsTime = 0;
+      physicsFrames = 0;
+    }
   }
 }
 
