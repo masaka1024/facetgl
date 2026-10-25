@@ -23,7 +23,8 @@ files converted by [mmd2gltf](https://github.com/masaka1024/mmd2gltf-gui).*
 - **情報パネル**: ファイルサイズ、頂点・三角形・材質・ボーン・モーフ数、テクスチャ一覧、ノード階層、描画状況、
   読み込めなかったファイル、VRM の利用条件
 - **MMD 表示**: PMX/PMD を MMD と同じ式でシェーディング (トゥーン・スフィア・エッジ)
-- **物理演算 (試験機能)**: PMX/PMD の髪やスカートを物理で揺らせる (`Alt` + ドラッグでモデルを動かす)
+- **物理演算 (試験機能)**: PMX の髪やスカートを物理で揺らせる (`Alt` + ドラッグでモデルを動かす)。
+  MMD の挙動に合わせた自作の Bullet 2.75 互換エンジンで計算
 - **mmd2gltf の `extras.mmd` に対応**: 変換済み GLB も MMD 表示で開け、glTF 標準表示と切り替え可能
 - **表示設定**: 透視 / 平行投影、視野角、輪郭線の太さ
 - 圧縮 glTF (Draco / KTX2 / Meshopt) に対応
@@ -79,7 +80,7 @@ xattr -dr com.apple.quarantine /Applications/FacetGL.app
 | `Space` | アニメーションの再生 / 一時停止 |
 | `I` | 情報パネルの表示 / 非表示 |
 | `P` | 透視 / 平行投影の切り替え |
-| `F` | 物理演算の ON / OFF (PMX / PMD、試験機能) |
+| `F` | 物理演算の ON / OFF (PMX、試験機能) |
 | `R` | 物理リセット (姿勢を初期状態に戻してやり直す) |
 | `Alt` + ドラッグ (Mac は `option` + ドラッグ) | 物理 ON のとき、モデルを動かして髪やスカートを揺らす (離すと元の位置に戻る) |
 
@@ -102,14 +103,16 @@ color = color × トゥーン(N·L) + スペキュラ × ライト色 × pow(N·
 
 ## 物理演算 (試験機能)
 
-PMX / PMD に剛体があると「物理: OFF」ボタンが表示され、押すと髪やスカートなどの剛体が物理演算で動きます。
+PMX に剛体があると「物理: OFF」ボタンが表示され、押すと髪やスカートなどの剛体が物理演算で動きます。
 モーション (VMD) には未対応のため、`Alt` (Mac は `option`) + ドラッグでモデルを動かして揺れを確かめます。
 
-- 物理演算は three.js の MMDPhysics と [ammo.js](https://github.com/kripken/ammo.js) (Bullet の WebAssembly 版) で計算します。
-  揺れ方は MMD とは少し異なることがあります
-- ammo.js (約 1 MB) は、物理を初めて ON にしたときに読み込みます。OFF のままなら読み込みません
-- ボタンの「(1.2 ms)」は、1 フレームあたりの物理演算の時間です
-- mmd2gltf で変換した glTF (`extras.mmd`) の物理には未対応です
+- 物理演算は、MMD (PMX エディタ) の物理を Bullet 2.75 互換で再現する自作エンジン
+  [mmd2gltf-cs-physics](https://github.com/masaka1024/mmd2gltf-cs-physics) を TypeScript へ移植したもの
+  (`src/physics/engine/`) で計算します。Unity / UE5 用インポーターと同じエンジンです
+- 移植版は、計算をすべて 32 ビット小数 (C# の `float`) と同じ丸めで行います。
+  同じモデル・同じ入力で、C# 版と全剛体の位置・回転・速度がビット単位で一致することを確認しています
+- 対象は PMX のみです (PMD と、mmd2gltf で変換した glTF の `extras.mmd` は未対応)
+- ボタンの「(4.0 ms)」は、1 フレームあたりの物理演算の時間です。剛体の多いモデルほど重くなります
 
 ## ソースからビルド
 

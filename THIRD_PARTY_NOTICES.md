@@ -10,7 +10,13 @@ following third-party software.
 | [Tauri](https://github.com/tauri-apps/tauri) (`tauri`, `@tauri-apps/api`, `@tauri-apps/plugin-dialog`) | 2.x | MIT OR Apache-2.0 | Desktop application shell |
 | [Draco](https://github.com/google/draco) decoder | from three.js 0.160 | Apache-2.0 | `public/libs/draco/` (Draco-compressed glTF) |
 | [Basis Universal](https://github.com/BinomialLLC/basis_universal) transcoder | from three.js 0.160 | Apache-2.0 | `public/libs/basis/` (KTX2 textures) |
-| [ammo.js](https://github.com/kripken/ammo.js) (port of [Bullet Physics](https://github.com/bulletphysics/bullet3)) | from three.js 0.160 | zlib | `public/libs/ammo/` (MMD physics, loaded when physics is turned on) |
+
+## MMD physics engine
+
+`src/physics/engine/` is a TypeScript port of
+[mmd2gltf-cs-physics](https://github.com/masaka1024/mmd2gltf-cs-physics)
+(MIT License, Copyright (c) 2026 masaka1024), the same author's Bullet 2.75-compatible
+MMD physics engine.
 
 ## MMD shared toon textures
 
