@@ -17,25 +17,113 @@ export enum JointType {
   Hinge = 5,
 }
 
-/** One solver row (linear or angular). Created fresh per Prepare, mutated in place by the solver (C# `ref`). */
-class ConstraintRow {
-  axis: Vec3 = Vec3.Zero;
-  angular = false;
-  relA: Vec3 = Vec3.Zero;
-  relB: Vec3 = Vec3.Zero;
-  lowerImpulse = 0;
-  upperImpulse = 0;
-  targetVel = 0;
-  effMass = 0;
-  accumulated = 0;
-  positionBias = 0;
-  pseudoAccumulated = 0;
-  dof = 0;
-  warmStartable = false;
-  // scalar copies of axis / relA / relB for the solver loop
-  ax = 0; ay = 0; az = 0;
-  rax = 0; ray = 0; raz = 0;
-  rbx = 0; rby = 0; rbz = 0;
+// ---- packed row store used by the velocity solver (one per world, or a joint-private one) ----
+// Row layout (Float64Array, stride ROW): axis 0..2, relA 3..5, relB 6..8, lower 9, upper 10, targetVel 11,
+// effMass 12, accumulated 13, angular 14 (0/1), dof 15, warmStartable 16, positionBias 17, pseudoAccumulated 18.
+/** @internal */
+export const ROW = 19;
+/** @internal */
+export class RowStore {
+  d = new Float64Array(ROW * 256);
+  bodyA: RigidBody[] = [];
+  bodyB: RigidBody[] = [];
+  joint: Joint[] = [];
+  count = 0;
+  alloc() {
+    if ((this.count + 1) * ROW > this.d.length) {
+      const nd = new Float64Array(this.d.length * 2);
+      nd.set(this.d);
+      this.d = nd;
+    }
+    return this.count++;
+  }
+}
+
+/**
+ * @internal Joint.SolveVelocity for rows [start, end) of a store, in order (scalar form of the C# Vec3
+ * expressions, identical float32 operation order). The impulse application is inlined on purpose.
+ */
+export function solveRowRange(store: RowStore, start: number, end: number) {
+  const d = store.d, bA = store.bodyA, bB = store.bodyB;
+  for (let r = start; r < end; r++) {
+    const o = r * ROW;
+    const sa = bA[r].st, sb = bB[r].st;
+    const ax = d[o], ay = d[o + 1], az = d[o + 2];
+    const angular = d[o + 14] !== 0;
+    let relVel: number;
+    if (angular) {
+      // (wB - wA).Dot(axis)
+      relVel = f(f(f(f(sb[3] - sa[3]) * ax) + f(f(sb[4] - sa[4]) * ay)) + f(f(sb[5] - sa[5]) * az));
+    } else {
+      // ((vB + wB x relB) - (vA + wA x relA)).Dot(axis)
+      const rax = d[o + 3], ray = d[o + 4], raz = d[o + 5], rbx = d[o + 6], rby = d[o + 7], rbz = d[o + 8];
+      const wbx = sb[3], wby = sb[4], wbz = sb[5], wax = sa[3], way = sa[4], waz = sa[5];
+      const bx = f(sb[0] + f(f(wby * rbz) - f(wbz * rby)));
+      const by = f(sb[1] + f(f(wbz * rbx) - f(wbx * rbz)));
+      const bz = f(sb[2] + f(f(wbx * rby) - f(wby * rbx)));
+      const qx = f(sa[0] + f(f(way * raz) - f(waz * ray)));
+      const qy = f(sa[1] + f(f(waz * rax) - f(wax * raz)));
+      const qz = f(sa[2] + f(f(wax * ray) - f(way * rax)));
+      relVel = f(f(f(f(bx - qx) * ax) + f(f(by - qy) * ay)) + f(f(bz - qz) * az));
+    }
+
+    let dImpulse = f(f(d[o + 11] - relVel) * d[o + 12]);
+    const old = d[o + 13];
+    const acc = Math.max(d[o + 9], Math.min(d[o + 10], f(old + dImpulse)));
+    d[o + 13] = acc;
+    dImpulse = f(acc - old);
+
+    if (dImpulse !== 0) {
+      const px = f(ax * dImpulse), py = f(ay * dImpulse), pz = f(az * dImpulse);
+      const nx = -px, ny = -py, nz = -pz;
+      if (angular) {
+        // ApplyTorqueImpulse(-L) on A, (L) on B
+        if (sa[15] !== 0) {
+          sa[3] = f(sa[3] + f(f(f(sa[6] * nx) + f(sa[7] * ny)) + f(sa[8] * nz)));
+          sa[4] = f(sa[4] + f(f(f(sa[9] * nx) + f(sa[10] * ny)) + f(sa[11] * nz)));
+          sa[5] = f(sa[5] + f(f(f(sa[12] * nx) + f(sa[13] * ny)) + f(sa[14] * nz)));
+        }
+        if (sb[15] !== 0) {
+          sb[3] = f(sb[3] + f(f(f(sb[6] * px) + f(sb[7] * py)) + f(sb[8] * pz)));
+          sb[4] = f(sb[4] + f(f(f(sb[9] * px) + f(sb[10] * py)) + f(sb[11] * pz)));
+          sb[5] = f(sb[5] + f(f(f(sb[12] * px) + f(sb[13] * py)) + f(sb[14] * pz)));
+        }
+      } else {
+        // ApplyImpulse(-P, relA) on A, (P, relB) on B
+        const ima = sa[15];
+        if (ima !== 0) {
+          const rx = d[o + 3], ry = d[o + 4], rz = d[o + 5];
+          sa[0] = f(sa[0] + f(nx * ima));
+          sa[1] = f(sa[1] + f(ny * ima));
+          sa[2] = f(sa[2] + f(nz * ima));
+          const cx = f(f(ry * nz) - f(rz * ny));
+          const cy = f(f(rz * nx) - f(rx * nz));
+          const cz = f(f(rx * ny) - f(ry * nx));
+          sa[3] = f(sa[3] + f(f(f(sa[6] * cx) + f(sa[7] * cy)) + f(sa[8] * cz)));
+          sa[4] = f(sa[4] + f(f(f(sa[9] * cx) + f(sa[10] * cy)) + f(sa[11] * cz)));
+          sa[5] = f(sa[5] + f(f(f(sa[12] * cx) + f(sa[13] * cy)) + f(sa[14] * cz)));
+        }
+        const imb = sb[15];
+        if (imb !== 0) {
+          const rx = d[o + 6], ry = d[o + 7], rz = d[o + 8];
+          sb[0] = f(sb[0] + f(px * imb));
+          sb[1] = f(sb[1] + f(py * imb));
+          sb[2] = f(sb[2] + f(pz * imb));
+          const cx = f(f(ry * pz) - f(rz * py));
+          const cy = f(f(rz * px) - f(rx * pz));
+          const cz = f(f(rx * py) - f(ry * px));
+          sb[3] = f(sb[3] + f(f(f(sb[6] * cx) + f(sb[7] * cy)) + f(sb[8] * cz)));
+          sb[4] = f(sb[4] + f(f(f(sb[9] * cx) + f(sb[10] * cy)) + f(sb[11] * cz)));
+          sb[5] = f(sb[5] + f(f(f(sb[12] * cx) + f(sb[13] * cy)) + f(sb[14] * cz)));
+        }
+      }
+    }
+    if (d[o + 16] !== 0) {
+      const j = store.joint[r];
+      if (angular) j.warmAng[d[o + 15]] = acc;
+      else j.warmLin[d[o + 15]] = acc;
+    }
+  }
 }
 
 const F_01 = f(0.1);
@@ -113,26 +201,28 @@ export class Joint {
 
   private bindAxes: Vec3[] | null = null;
 
-  private rows: ConstraintRow[] = [];
   private rowCount = 0;
 
-  /** Pooled row objects (C# stores rows by value in an array). newRow() resets every field like `new ConstraintRow{...}`. */
-  private newRow(): ConstraintRow {
-    let row = this.rows[this.rowCount];
-    if (!row) row = this.rows[this.rowCount] = new ConstraintRow();
-    row.relA = Vec3.Zero;
-    row.relB = Vec3.Zero;
-    row.accumulated = 0;
-    row.positionBias = 0;
-    row.pseudoAccumulated = 0;
-    return row;
-  }
+  private readonly ownStore = new RowStore();
+  private store: RowStore = this.ownStore;
+  private rowStart = 0;
 
-  private addRow(row: ConstraintRow) {
-    row.ax = row.axis.x; row.ay = row.axis.y; row.az = row.axis.z;
-    row.rax = row.relA.x; row.ray = row.relA.y; row.raz = row.relA.z;
-    row.rbx = row.relB.x; row.rby = row.relB.y; row.rbz = row.relB.z;
-    this.rows[this.rowCount++] = row;
+  /** Appends one row (C# AddRow(new ConstraintRow{...})) to the packed store. */
+  private addRow(axis: Vec3, rA: Vec3, rB: Vec3, angular: boolean, lo: number, hi: number, targetVel: number,
+                 positionBias: number, effMass: number, acc: number, dof: number, warm: boolean) {
+    this.rowCount++;
+    const st = this.store;
+    const idx = st.alloc();
+    const d = st.d, o = idx * ROW;
+    d[o] = axis.x; d[o + 1] = axis.y; d[o + 2] = axis.z;
+    d[o + 3] = rA.x; d[o + 4] = rA.y; d[o + 5] = rA.z;
+    d[o + 6] = rB.x; d[o + 7] = rB.y; d[o + 8] = rB.z;
+    d[o + 9] = lo; d[o + 10] = hi; d[o + 11] = targetVel;
+    d[o + 12] = effMass; d[o + 13] = acc; d[o + 14] = angular ? 1 : 0;
+    d[o + 15] = dof; d[o + 16] = warm ? 1 : 0; d[o + 17] = positionBias; d[o + 18] = 0;
+    st.bodyA[idx] = this.bodyA!;
+    st.bodyB[idx] = this.bodyB!;
+    st.joint[idx] = this;
   }
 
   private worldA: RigidTransform = RigidTransform.Identity;
@@ -157,10 +247,10 @@ export class Joint {
   private axesA: Vec3[] = [Vec3.Zero, Vec3.Zero, Vec3.Zero];
   private splitBias = false;
   private warmStart = false;
-  private readonly warmLin = [0, 0, 0];
+  /** @internal */ readonly warmLin = [0, 0, 0];
   private readonly warmLinSeen = [false, false, false];
   private warmStartAng = false;
-  private readonly warmAng = [0, 0, 0];
+  /** @internal */ readonly warmAng = [0, 0, 0];
   private readonly warmAngPrevSide = [-1, -1, -1];
   private readonly warmAngSeen = [false, false, false];
 
@@ -216,7 +306,14 @@ export class Joint {
   }
 
   /** Prepares frames / anchors / rows for one substep. */
-  prepare(dt: number, splitBias = false, warmStart = false, warmStartAng = false) {
+  prepare(dt: number, splitBias = false, warmStart = false, warmStartAng = false, store?: RowStore) {
+    // Rows are appended to the world's packed store (or a private one when called standalone).
+    if (store) this.store = store;
+    else {
+      this.store = this.ownStore;
+      this.ownStore.count = 0;
+    }
+    this.rowStart = this.store.count;
     this.splitBias = Joint.splitCrossOnly ? this.isCrossTypeJoint : Joint.splitChainOnly ? !this.isCrossTypeJoint : splitBias;
     this.warmStart = warmStart;
     this.warmStartAng = warmStartAng;
@@ -227,6 +324,14 @@ export class Joint {
     this.leverLenAnchorReady = false;
     const bodyA = this.bodyA, bodyB = this.bodyB;
     if (!bodyA || !bodyB) return;
+
+    if (
+      Joint.bulletLimitRowGating && Joint.angularMixedAxes && Joint.bulletAngleConvention && Joint.linearLeverMode === 1 &&
+      Joint.springAsMotorRow && !Joint.freezeCrossAxes && !warmStart && !warmStartAng && this.bindAxes
+    ) {
+      this.prepareFast(dt, bodyA, bodyB);
+      return;
+    }
 
     this.worldA = bodyA.worldTransform.mul(this.frameInA);
     this.worldB = bodyB.worldTransform.mul(this.frameInB);
@@ -399,20 +504,205 @@ export class Joint {
         }
 
     if (this.warmStart || this.warmStartAng) {
-      for (let r = 0; r < this.rowCount; r++) {
-        const row = this.rows[r];
-        if (!row.warmStartable) continue;
-        if (row.angular) {
-          const L = row.axis.mul(row.accumulated);
+      const d = this.store.d;
+      for (let r = this.rowStart; r < this.rowStart + this.rowCount; r++) {
+        const o = r * ROW;
+        if (d[o + 16] === 0) continue;
+        const axis = new Vec3(d[o], d[o + 1], d[o + 2]);
+        if (d[o + 14] !== 0) {
+          const L = axis.mul(d[o + 13]);
           bodyA.applyTorqueImpulse(L.neg());
           bodyB.applyTorqueImpulse(L);
         } else {
-          const P = row.axis.mul(row.accumulated);
-          bodyA.applyImpulse(P.neg(), row.relA);
-          bodyB.applyImpulse(P, row.relB);
+          const P = axis.mul(d[o + 13]);
+          bodyA.applyImpulse(P.neg(), new Vec3(d[o + 3], d[o + 4], d[o + 5]));
+          bodyB.applyImpulse(P, new Vec3(d[o + 6], d[o + 7], d[o + 8]));
         }
       }
     }
+  }
+
+
+  /**
+   * Prepare() for the default flag set (BulletLimitRowGating, AngularMixedAxes, BulletAngleConvention,
+   * LinearLeverMode=1, SpringAsMotorRow, no joint warm start, no FreezeCrossAxes) in scalar form:
+   * the same float32 operations in the same order as the generic path above, without allocations.
+   */
+  private prepareFast(dt: number, bodyA: RigidBody, bodyB: RigidBody) {
+    const S = PF;
+    const ta = bodyA.worldTransform, tb = bodyB.worldTransform;
+    const fA = this.frameInA, fB = this.frameInB;
+    // worldA = A.wt * frameInA ; worldB = B.wt * frameInB  (RigidTransform operator *)
+    qMulNormalized(ta.rotation, fA.rotation, S, 0);
+    qRotate(ta.rotation, fA.origin.x, fA.origin.y, fA.origin.z, S, 8);
+    const aAx = f(S[8] + ta.origin.x), aAy = f(S[9] + ta.origin.y), aAz = f(S[10] + ta.origin.z);
+    qMulNormalized(tb.rotation, fB.rotation, S, 4);
+    qRotate(tb.rotation, fB.origin.x, fB.origin.y, fB.origin.z, S, 8);
+    const aBx = f(S[8] + tb.origin.x), aBy = f(S[9] + tb.origin.y), aBz = f(S[10] + tb.origin.z);
+
+    const ca = ta.origin, cb = tb.origin;
+    const rAx = f(aAx - ca.x), rAy = f(aAy - ca.y), rAz = f(aAz - ca.z);
+    const rBx = f(aBx - cb.x), rBy = f(aBy - cb.y), rBz = f(aBz - cb.z);
+
+    // basisA = FromQuat(worldA.rotation); axesA[i] = column i
+    m3FromQuat4(S, 0, S_BASIS);
+    const BA = S_BASIS;
+    const invDt = dt > 0 ? f(1 / dt) : 0;
+
+    // Bullet calculateLinearInfo / calculateAngleInfo chain (see the generic path)
+    m3FromQuatBullet(ta.rotation, S_BMA);
+    m3FromQuatBullet(tb.rotation, S_BMB);
+    m3FromQuatBullet(fA.rotation, S_T);
+    m3Mul(S_BMA, S_T, S_BA);
+    m3FromQuatBullet(fB.rotation, S_T);
+    m3Mul(S_BMB, S_T, S_BB);
+    const fa = fA.origin, fb = fB.origin;
+    const oAx = f(m3Row(S_BMA, 0, fa.x, fa.y, fa.z) + ca.x), oAy = f(m3Row(S_BMA, 3, fa.x, fa.y, fa.z) + ca.y), oAz = f(m3Row(S_BMA, 6, fa.x, fa.y, fa.z) + ca.z);
+    const oBx = f(m3Row(S_BMB, 0, fb.x, fb.y, fb.z) + cb.x), oBy = f(m3Row(S_BMB, 3, fb.x, fb.y, fb.z) + cb.y), oBz = f(m3Row(S_BMB, 6, fb.x, fb.y, fb.z) + cb.z);
+    m3BulletInverse(S_BA, S_INV);
+    const dx = f(oBx - oAx), dy = f(oBy - oAy), dz = f(oBz - oAz);
+    const ld0 = m3Row(S_INV, 0, dx, dy, dz), ld1 = m3Row(S_INV, 3, dx, dy, dz), ld2 = m3Row(S_INV, 6, dx, dy, dz);
+    m3Mul(S_INV, S_BB, S_T);
+    eulerBulletInto(S_T, true, S, 12); // euler -> S[12..14]
+
+    const lin = this.linearLowerLimit, linU = this.linearUpperLimit;
+    const sa = bodyA.st, sb = bodyB.st;
+    const beta = this.beta;
+    const gate = Joint.leverArmGate;
+    // armA for LinearLeverMode=1: anchorB - comA
+    const pAx = f(aBx - ca.x), pAy = f(aBy - ca.y), pAz = f(aBz - ca.z);
+    let lenRA = -1, lenRB = -1, anchorDelta = -1;
+    const anchorDeltaF = () => {
+      if (anchorDelta < 0) {
+        const ex = f(aBx - aAx), ey = f(aBy - aAy), ez = f(aBz - aAz);
+        anchorDelta = f(Math.sqrt(f(f(f(ex * ex) + f(ey * ey)) + f(ez * ez))));
+      }
+      return anchorDelta;
+    };
+    for (let i = 0; i < 3; i++) {
+      const ax = BA[i], ay = BA[3 + i], az = BA[6 + i];
+      const lo = i === 0 ? lin.x : i === 1 ? lin.y : lin.z;
+      const hi = i === 0 ? linU.x : i === 1 ? linU.y : linU.z;
+      const cur = i === 0 ? ld0 : i === 1 ? ld1 : ld2;
+      let err: number, lower: number, upper: number;
+      if (lo > hi || (lo === hi && testLimitValue(cur, lo, hi) === 0) || (lo !== hi && !(cur < lo) && !(cur > hi))) {
+        // free / locked exactly at the limit / inside the range -> spring motor row only
+        const k = i === 0 ? this.springLinear.x : i === 1 ? this.springLinear.y : this.springLinear.z;
+        if (!(k <= 0)) this.motorRowFast(false, i, ax, ay, az, cur, lo, hi, k, invDt, rAx, rAy, rAz, rBx, rBy, rBz, pAx, pAy, pAz, anchorDeltaF, sa, sb);
+        continue;
+      }
+      const BND = Joint.lockedRowImpulseBound;
+      if (lo === hi) { err = f(lo - cur); lower = -BND; upper = BND; }
+      else if (cur < lo) { err = f(lo - cur); lower = 0; upper = BND; }
+      else { err = f(hi - cur); lower = -BND; upper = 0; }
+      if (Joint.errDeadband > 0 && Math.abs(err) < Joint.errDeadband) continue;
+
+      let armAx = pAx, armAy = pAy, armAz = pAz;
+      if (gate > 0) {
+        if (lenRA < 0) {
+          lenRA = f(Math.sqrt(f(f(f(rAx * rAx) + f(rAy * rAy)) + f(rAz * rAz))));
+          lenRB = f(Math.sqrt(f(f(f(rBx * rBx) + f(rBy * rBy)) + f(rBz * rBz))));
+        }
+        const scale = f(lenRA + lenRB);
+        const ratio = scale > F_1EM9 ? f(anchorDeltaF() / scale) : 0;
+        if (ratio > gate) { armAx = rAx; armAy = rAy; armAz = rAz; }
+      }
+      let linTarget = Joint.clampCorr(f(f(err * beta) * invDt));
+      if (Joint.biasDeadband > 0 && Math.abs(err) < Joint.biasDeadband) linTarget = 0;
+      this.linearRowFast(sa, sb, ax, ay, az, armAx, armAy, armAz, rBx, rBy, rBz, linTarget, lower, upper, i);
+    }
+
+    // --- angular: Bullet mixed axes  axis0 = B col0, axis2 = A col2, m1 = axis2 x axis0, m0 = m1 x axis2, m2 = axis0 x m1
+    m3FromQuat4(S, 4, S_T);
+    const b0x = S_T[0], b0y = S_T[3], b0z = S_T[6];
+    const a2x = BA[2], a2y = BA[5], a2z = BA[8];
+    const m1x = f(f(a2y * b0z) - f(a2z * b0y)), m1y = f(f(a2z * b0x) - f(a2x * b0z)), m1z = f(f(a2x * b0y) - f(a2y * b0x));
+    const m0x = f(f(m1y * a2z) - f(m1z * a2y)), m0y = f(f(m1z * a2x) - f(m1x * a2z)), m0z = f(f(m1x * a2y) - f(m1y * a2x));
+    const m2x = f(f(b0y * m1z) - f(b0z * m1y)), m2y = f(f(b0z * m1x) - f(b0x * m1z)), m2z = f(f(b0x * m1y) - f(b0y * m1x));
+    normalizeInto(m0x, m0y, m0z, S, 16);
+    normalizeInto(m1x, m1y, m1z, S, 19);
+    normalizeInto(m2x, m2y, m2z, S, 22);
+    const angL = this.angularLowerLimit, angU = this.angularUpperLimit;
+    const angBeta = f(beta * Joint.angularBetaScale);
+    for (let i = 0; i < 3; i++) {
+      // BulletAngleConvention: axis = -mix_i
+      const ax = -S[16 + i * 3], ay = -S[17 + i * 3], az = -S[18 + i * 3];
+      const lo = i === 0 ? angL.x : i === 1 ? angL.y : angL.z;
+      const hi = i === 0 ? angU.x : i === 1 ? angU.y : angU.z;
+      const cur = S[12 + i];
+      if (lo > hi || (lo === hi && testLimitValue(cur, lo, hi) === 0) || (lo !== hi && !(cur < lo) && !(cur > hi))) {
+        const k = i === 0 ? this.springAngular.x : i === 1 ? this.springAngular.y : this.springAngular.z;
+        if (!(k <= 0)) this.motorRowFast(true, i, ax, ay, az, cur, lo, hi, k, invDt, 0, 0, 0, 0, 0, 0, 0, 0, 0, anchorDeltaF, sa, sb);
+        continue;
+      }
+      let err: number, lower: number, upper: number;
+      if (lo === hi) { err = f(lo - cur); lower = -F_1E18; upper = F_1E18; }
+      else if (cur < lo) { err = f(lo - cur); lower = 0; upper = F_1E18; }
+      else { err = f(hi - cur); lower = -F_1E18; upper = 0; }
+      if (Joint.errDeadband > 0 && Math.abs(err) < Joint.errDeadband) continue;
+      this.angularRowFast(sa, sb, ax, ay, az, Joint.clampCorr(f(f(err * angBeta) * invDt)), lower, upper, i);
+    }
+  }
+
+  /** AddSpringMotorRow (scalar). k > 0 is checked by the caller. */
+  private motorRowFast(angular: boolean, i: number, ax: number, ay: number, az: number, cur: number, lo: number, hi: number,
+    k: number, invDt: number, rAx: number, rAy: number, rAz: number, rBx: number, rBy: number, rBz: number,
+    pAx: number, pAy: number, pAz: number, anchorDelta: () => number, sa: Float64Array, sb: Float64Array) {
+    const fps = invDt;
+    if (fps <= 0) return;
+    const eq = clampToLimit(0, lo, hi);
+    const delta = f(cur - eq);
+    const iters = Joint.solverIterationsForSpring > 0 ? Joint.solverIterationsForSpring : 10;
+    const velFactor = f(f(fps * Joint.bulletSpringDamping) / iters);
+    const force = f(delta * k);
+    let targetVel = f(-velFactor * force);
+    const maxMotorForce = f(Math.abs(force) / fps);
+    const motFact = Joint.motorFactor(cur, lo, hi, targetVel, f(fps * this.beta));
+    targetVel = f(targetVel * motFact);
+    if (angular) {
+      this.angularRowFast(sa, sb, ax, ay, az, targetVel, -maxMotorForce, maxMotorForce, i);
+      return;
+    }
+    let armAx = pAx, armAy = pAy, armAz = pAz;
+    if (Joint.leverArmGate > 0) {
+      const gscale = f(f(Math.sqrt(f(f(f(rAx * rAx) + f(rAy * rAy)) + f(rAz * rAz)))) + f(Math.sqrt(f(f(f(rBx * rBx) + f(rBy * rBy)) + f(rBz * rBz)))));
+      if (anchorDelta() > f(Joint.leverArmGate * gscale)) { armAx = rAx; armAy = rAy; armAz = rAz; }
+    }
+    this.linearRowFast(sa, sb, ax, ay, az, armAx, armAy, armAz, rBx, rBy, rBz, targetVel, -maxMotorForce, maxMotorForce, i);
+  }
+
+  /** AddLinearRow (scalar, no warm start). */
+  private linearRowFast(sa: Float64Array, sb: Float64Array, ax: number, ay: number, az: number,
+    rax: number, ray: number, raz: number, rbx: number, rby: number, rbz: number,
+    targetVel: number, lo: number, hi: number, dof: number) {
+    const cAx = f(f(ray * az) - f(raz * ay)), cAy = f(f(raz * ax) - f(rax * az)), cAz = f(f(rax * ay) - f(ray * ax));
+    const cBx = f(f(rby * az) - f(rbz * ay)), cBy = f(f(rbz * ax) - f(rbx * az)), cBz = f(f(rbx * ay) - f(rby * ax));
+    const k = f(f(f(sa[15] + sb[15]) + inertiaDot(sa, cAx, cAy, cAz)) + inertiaDot(sb, cBx, cBy, cBz));
+    this.pushRow(ax, ay, az, rax, ray, raz, rbx, rby, rbz, false, lo, hi, targetVel, k > 0 ? f(1 / k) : 0, dof);
+  }
+
+  /** AddAngularRow (scalar, no warm start). */
+  private angularRowFast(sa: Float64Array, sb: Float64Array, ax: number, ay: number, az: number, targetVel: number, lo: number, hi: number, dof: number) {
+    const k = f(inertiaDot(sa, ax, ay, az) + inertiaDot(sb, ax, ay, az));
+    this.pushRow(ax, ay, az, 0, 0, 0, 0, 0, 0, true, lo, hi, targetVel, k > 0 ? f(1 / k) : 0, dof);
+  }
+
+  private pushRow(ax: number, ay: number, az: number, rax: number, ray: number, raz: number, rbx: number, rby: number, rbz: number,
+    angular: boolean, lo: number, hi: number, targetVel: number, effMass: number, dof: number) {
+    this.rowCount++;
+    const st = this.store;
+    const idx = st.alloc();
+    const d = st.d, o = idx * ROW;
+    d[o] = ax; d[o + 1] = ay; d[o + 2] = az;
+    d[o + 3] = rax; d[o + 4] = ray; d[o + 5] = raz;
+    d[o + 6] = rbx; d[o + 7] = rby; d[o + 8] = rbz;
+    d[o + 9] = lo; d[o + 10] = hi;
+    d[o + 11] = this.splitBias ? 0 : targetVel;
+    d[o + 12] = effMass; d[o + 13] = 0; d[o + 14] = angular ? 1 : 0;
+    d[o + 15] = dof; d[o + 16] = 0; d[o + 17] = this.splitBias ? targetVel : 0; d[o + 18] = 0;
+    st.bodyA[idx] = this.bodyA!;
+    st.bodyB[idx] = this.bodyB!;
+    st.joint[idx] = this;
   }
 
   /** Spring as a Bullet 2.75 limit-motor row (only for axes without a limit row). */
@@ -470,38 +760,22 @@ export class Joint {
   }
 
   private addLinearRow(axis: Vec3, rA: Vec3, rB: Vec3, targetVel: number, lo: number, hi: number, dof: number, locked: boolean) {
-    const bodyA = this.bodyA!, bodyB = this.bodyB!;
-    const rAxn = Vec3.cross(rA, axis);
-    const rBxn = Vec3.cross(rB, axis);
-    const k = f(
-      f(f(f(bodyA.inverseMass + bodyB.inverseMass) + rAxn.dot(bodyA.inverseInertiaWorld.mulVec(rAxn))) +
-        rBxn.dot(bodyB.inverseInertiaWorld.mulVec(rBxn))),
-    );
+    // k = imA + imB + (rA x n)·(IA (rA x n)) + (rB x n)·(IB (rB x n))   (scalar form, same operation order)
+    const sa = this.bodyA!.st, sb = this.bodyB!.st;
+    const k = f(f(f(sa[15] + sb[15]) + crossInertiaDot(sa, rA, axis)) + crossInertiaDot(sb, rB, axis));
     const warm = this.warmStart && locked;
     let acc = 0;
     if (warm) {
       this.warmLinSeen[dof] = true;
       acc = Math.max(lo, Math.min(hi, f(this.warmLin[dof] * Joint.warmStartFactor)));
     }
-    const row = this.newRow();
-    row.axis = axis;
-    row.angular = false;
-    row.relA = rA;
-    row.relB = rB;
-    row.lowerImpulse = lo;
-    row.upperImpulse = hi;
-    row.targetVel = this.splitBias ? 0 : targetVel;
-    row.positionBias = this.splitBias ? targetVel : 0;
-    row.effMass = k > 0 ? f(1 / k) : 0;
-    row.dof = dof;
-    row.warmStartable = warm;
-    row.accumulated = acc;
-    this.addRow(row);
+    this.addRow(axis, rA, rB, false, lo, hi, this.splitBias ? 0 : targetVel, this.splitBias ? targetVel : 0,
+      k > 0 ? f(1 / k) : 0, acc, dof, warm);
   }
 
   private addAngularRow(axis: Vec3, targetVel: number, lo: number, hi: number, dof: number, sideCode: number) {
-    const bodyA = this.bodyA!, bodyB = this.bodyB!;
-    const k = f(axis.dot(bodyA.inverseInertiaWorld.mulVec(axis)) + axis.dot(bodyB.inverseInertiaWorld.mulVec(axis)));
+    const sa = this.bodyA!.st, sb = this.bodyB!.st;
+    const k = f(inertiaDot(sa, axis.x, axis.y, axis.z) + inertiaDot(sb, axis.x, axis.y, axis.z));
     let warm = false;
     let acc = 0;
     if (this.warmStartAng) {
@@ -511,18 +785,8 @@ export class Joint {
       acc = sameSide ? Math.max(lo, Math.min(hi, f(this.warmAng[dof] * Joint.warmStartFactor))) : 0;
       this.warmAngPrevSide[dof] = sideCode;
     }
-    const row = this.newRow();
-    row.axis = axis;
-    row.angular = true;
-    row.lowerImpulse = lo;
-    row.upperImpulse = hi;
-    row.targetVel = this.splitBias ? 0 : targetVel;
-    row.positionBias = this.splitBias ? targetVel : 0;
-    row.effMass = k > 0 ? f(1 / k) : 0;
-    row.dof = dof;
-    row.warmStartable = warm;
-    row.accumulated = acc;
-    this.addRow(row);
+    this.addRow(axis, Vec3.Zero, Vec3.Zero, true, lo, hi, this.splitBias ? 0 : targetVel, this.splitBias ? targetVel : 0,
+      k > 0 ? f(1 / k) : 0, acc, dof, warm);
   }
 
   /** Explicit spring impulses (only when springAsMotorRow is false; the default returns immediately). */
@@ -532,6 +796,7 @@ export class Joint {
     const hasLin = this.springLinear.lengthSquared > 0;
     const hasAng = this.springAngular.lengthSquared > 0;
     if (!hasLin && !hasAng) return;
+    if (Joint.springAsMotorRow) return; // (the C# code computes rA/rB/linDelta first; they are pure)
     const invDtSpring = dt > 0 ? f(1 / dt) : 0;
 
     const rA = this.anchorA.sub(bodyA.centerOfMass);
@@ -580,111 +845,56 @@ export class Joint {
     }
   }
 
-  /** One velocity iteration over this joint's rows (scalar form of the C# Vec3 expressions, same float32 op order). */
+  /** @internal True once the first Prepare captured the bind axes (needed before the kernel path). */
+  get hasBindAxes() {
+    return this.bindAxes !== null;
+  }
+  /** @internal Upper bound of rows one Prepare can create. */
+  get maxRows() {
+    return 6;
+  }
+  /** @internal Rows of this joint were written by the world's kernel into `store` at [start, start+count). */
+  adoptRows(store: RowStore, start: number, count: number) {
+    this.store = store;
+    this.rowStart = start;
+    this.rowCount = count;
+  }
+
+  /** One velocity iteration over this joint's rows. */
   solveVelocity() {
-    const A = this.bodyA!, B = this.bodyB!;
-    const rows = this.rows;
-    for (let r = 0; r < this.rowCount; r++) {
-      const row = rows[r];
-      const ax = row.ax, ay = row.ay, az = row.az;
-      let relVel: number;
-      if (row.angular) {
-        // (wB - wA).Dot(axis)
-        relVel = f(f(f(f(B.avx - A.avx) * ax) + f(f(B.avy - A.avy) * ay)) + f(f(B.avz - A.avz) * az));
-      } else {
-        // ((vB + wB x relB) - (vA + wA x relA)).Dot(axis)
-        const rbx = row.rbx, rby = row.rby, rbz = row.rbz, rax = row.rax, ray = row.ray, raz = row.raz;
-        const bx = f(B.lvx + f(f(B.avy * rbz) - f(B.avz * rby)));
-        const by = f(B.lvy + f(f(B.avz * rbx) - f(B.avx * rbz)));
-        const bz = f(B.lvz + f(f(B.avx * rby) - f(B.avy * rbx)));
-        const qx = f(A.lvx + f(f(A.avy * raz) - f(A.avz * ray)));
-        const qy = f(A.lvy + f(f(A.avz * rax) - f(A.avx * raz)));
-        const qz = f(A.lvz + f(f(A.avx * ray) - f(A.avy * rax)));
-        relVel = f(f(f(f(bx - qx) * ax) + f(f(by - qy) * ay)) + f(f(bz - qz) * az));
-      }
-
-      let dImpulse = f(f(row.targetVel - relVel) * row.effMass);
-      const old = row.accumulated;
-      row.accumulated = Math.max(row.lowerImpulse, Math.min(row.upperImpulse, f(old + dImpulse)));
-      dImpulse = f(row.accumulated - old);
-
-      if (dImpulse !== 0) {
-        // Manually inlined RigidBody.applyTorqueImpulse / applyImpulse (A gets -P, B gets +P).
-        // Kept inline on purpose: a non-inlined call boxes every double argument (GC pressure).
-        const px = f(ax * dImpulse), py = f(ay * dImpulse), pz = f(az * dImpulse);
-        const nx = -px, ny = -py, nz = -pz;
-        if (row.angular) {
-          if (A.inverseMass !== 0) {
-            A.avx = f(A.avx + f(f(f(A.i00 * nx) + f(A.i01 * ny)) + f(A.i02 * nz)));
-            A.avy = f(A.avy + f(f(f(A.i10 * nx) + f(A.i11 * ny)) + f(A.i12 * nz)));
-            A.avz = f(A.avz + f(f(f(A.i20 * nx) + f(A.i21 * ny)) + f(A.i22 * nz)));
-          }
-          if (B.inverseMass !== 0) {
-            B.avx = f(B.avx + f(f(f(B.i00 * px) + f(B.i01 * py)) + f(B.i02 * pz)));
-            B.avy = f(B.avy + f(f(f(B.i10 * px) + f(B.i11 * py)) + f(B.i12 * pz)));
-            B.avz = f(B.avz + f(f(f(B.i20 * px) + f(B.i21 * py)) + f(B.i22 * pz)));
-          }
-        } else {
-          const ima = A.inverseMass;
-          if (ima !== 0) {
-            const rx = row.rax, ry = row.ray, rz = row.raz;
-            A.lvx = f(A.lvx + f(nx * ima));
-            A.lvy = f(A.lvy + f(ny * ima));
-            A.lvz = f(A.lvz + f(nz * ima));
-            const cx = f(f(ry * nz) - f(rz * ny));
-            const cy = f(f(rz * nx) - f(rx * nz));
-            const cz = f(f(rx * ny) - f(ry * nx));
-            A.avx = f(A.avx + f(f(f(A.i00 * cx) + f(A.i01 * cy)) + f(A.i02 * cz)));
-            A.avy = f(A.avy + f(f(f(A.i10 * cx) + f(A.i11 * cy)) + f(A.i12 * cz)));
-            A.avz = f(A.avz + f(f(f(A.i20 * cx) + f(A.i21 * cy)) + f(A.i22 * cz)));
-          }
-          const imb = B.inverseMass;
-          if (imb !== 0) {
-            const rx = row.rbx, ry = row.rby, rz = row.rbz;
-            B.lvx = f(B.lvx + f(px * imb));
-            B.lvy = f(B.lvy + f(py * imb));
-            B.lvz = f(B.lvz + f(pz * imb));
-            const cx = f(f(ry * pz) - f(rz * py));
-            const cy = f(f(rz * px) - f(rx * pz));
-            const cz = f(f(rx * py) - f(ry * px));
-            B.avx = f(B.avx + f(f(f(B.i00 * cx) + f(B.i01 * cy)) + f(B.i02 * cz)));
-            B.avy = f(B.avy + f(f(f(B.i10 * cx) + f(B.i11 * cy)) + f(B.i12 * cz)));
-            B.avz = f(B.avz + f(f(f(B.i20 * cx) + f(B.i21 * cy)) + f(B.i22 * cz)));
-          }
-        }
-      }
-      if (row.warmStartable) {
-        if (row.angular) this.warmAng[row.dof] = row.accumulated;
-        else this.warmLin[row.dof] = row.accumulated;
-      }
-    }
+    if (this.rowCount > 0) solveRowRange(this.store, this.rowStart, this.rowStart + this.rowCount);
   }
 
   /** Split-impulse position iteration (pseudo velocities). */
   solveSplitPosition() {
     const bodyA = this.bodyA!, bodyB = this.bodyB!;
-    for (let r = 0; r < this.rowCount; r++) {
-      const row = this.rows[r];
-      const relVel = row.angular
-        ? bodyB.pseudoAngularVelocity.sub(bodyA.pseudoAngularVelocity).dot(row.axis)
+    const d = this.store.d;
+    for (let r = this.rowStart; r < this.rowStart + this.rowCount; r++) {
+      const o = r * ROW;
+      const axis = new Vec3(d[o], d[o + 1], d[o + 2]);
+      const relA = new Vec3(d[o + 3], d[o + 4], d[o + 5]), relB = new Vec3(d[o + 6], d[o + 7], d[o + 8]);
+      const angular = d[o + 14] !== 0;
+      const relVel = angular
+        ? bodyB.pseudoAngularVelocity.sub(bodyA.pseudoAngularVelocity).dot(axis)
         : bodyB.pseudoLinearVelocity
-            .add(Vec3.cross(bodyB.pseudoAngularVelocity, row.relB))
-            .sub(bodyA.pseudoLinearVelocity.add(Vec3.cross(bodyA.pseudoAngularVelocity, row.relA)))
-            .dot(row.axis);
+            .add(Vec3.cross(bodyB.pseudoAngularVelocity, relB))
+            .sub(bodyA.pseudoLinearVelocity.add(Vec3.cross(bodyA.pseudoAngularVelocity, relA)))
+            .dot(axis);
 
-      let dImpulse = f(f(row.positionBias - relVel) * row.effMass);
-      const old = row.pseudoAccumulated;
-      row.pseudoAccumulated = Math.max(row.lowerImpulse, Math.min(row.upperImpulse, f(old + dImpulse)));
-      dImpulse = f(row.pseudoAccumulated - old);
+      let dImpulse = f(f(d[o + 17] - relVel) * d[o + 12]);
+      const old = d[o + 18];
+      const acc = Math.max(d[o + 9], Math.min(d[o + 10], f(old + dImpulse)));
+      d[o + 18] = acc;
+      dImpulse = f(acc - old);
 
-      if (row.angular) {
-        const L = row.axis.mul(dImpulse);
+      if (angular) {
+        const L = axis.mul(dImpulse);
         bodyA.applyPushTorqueImpulse(L.neg());
         bodyB.applyPushTorqueImpulse(L);
       } else {
-        const P = row.axis.mul(dImpulse);
-        bodyA.applyPushImpulse(P.neg(), row.relA);
-        bodyB.applyPushImpulse(P, row.relB);
+        const P = axis.mul(dImpulse);
+        bodyA.applyPushImpulse(P.neg(), relA);
+        bodyB.applyPushImpulse(P, relB);
       }
     }
   }
@@ -739,6 +949,95 @@ export class Joint {
       z = 0;
     }
     return new Vec3(x, y, z);
+  }
+}
+
+/** v·(I v) with I = inverseInertiaWorld in solver state s (Vec3.Dot(Matrix3x3 * v) order). */
+function inertiaDot(s: Float64Array, x: number, y: number, z: number) {
+  const ix = f(f(f(s[6] * x) + f(s[7] * y)) + f(s[8] * z));
+  const iy = f(f(f(s[9] * x) + f(s[10] * y)) + f(s[11] * z));
+  const iz = f(f(f(s[12] * x) + f(s[13] * y)) + f(s[14] * z));
+  return f(f(f(x * ix) + f(y * iy)) + f(z * iz));
+}
+/** c·(I c) with c = r x n. */
+function crossInertiaDot(s: Float64Array, r: Vec3, n: Vec3) {
+  const cx = f(f(r.y * n.z) - f(r.z * n.y));
+  const cy = f(f(r.z * n.x) - f(r.x * n.z));
+  const cz = f(f(r.x * n.y) - f(r.y * n.x));
+  return inertiaDot(s, cx, cy, cz);
+}
+
+const PF = new Float64Array(32); // prepareFast scratch: q worldA 0..3, q worldB 4..7, tmp 8..10, euler 12..14, mix 16..24
+
+/** out[o..o+3] = (a * b).Normalized  (Quat operator * then Normalized) */
+function qMulNormalized(a: Quat, b: Quat, out: Float64Array, o: number) {
+  const x = f(f(f(f(a.w * b.x) + f(a.x * b.w)) + f(a.y * b.z)) - f(a.z * b.y));
+  const y = f(f(f(f(a.w * b.y) - f(a.x * b.z)) + f(a.y * b.w)) + f(a.z * b.x));
+  const z = f(f(f(f(a.w * b.z) + f(a.x * b.y)) - f(a.y * b.x)) + f(a.z * b.w));
+  const w = f(f(f(f(a.w * b.w) - f(a.x * b.x)) - f(a.y * b.y)) - f(a.z * b.z));
+  const len = f(Math.sqrt(f(f(f(f(x * x) + f(y * y)) + f(z * z)) + f(w * w))));
+  if (len > 0) {
+    const i = f(1 / len);
+    out[o] = f(x * i); out[o + 1] = f(y * i); out[o + 2] = f(z * i); out[o + 3] = f(w * i);
+  } else {
+    out[o] = 0; out[o + 1] = 0; out[o + 2] = 0; out[o + 3] = 1;
+  }
+}
+
+/** out[o..o+2] = q * v  (Quat operator *(Quat, Vec3)) */
+function qRotate(q: Quat, ix: number, iy: number, iz: number, out: Float64Array, o: number) {
+  const qx = q.x, qy = q.y, qz = q.z, qw = q.w;
+  const t = f(2 / f(f(f(f(qx * qx) + f(qy * qy)) + f(qz * qz)) + f(qw * qw)));
+  out[o] = f(f(f(f(1 - f(t * f(f(qy * qy) + f(qz * qz)))) * ix) + f(f(t * f(f(qx * qy) - f(qw * qz))) * iy)) + f(f(t * f(f(qx * qz) + f(qw * qy))) * iz));
+  out[o + 1] = f(f(f(f(t * f(f(qx * qy) + f(qw * qz))) * ix) + f(f(1 - f(t * f(f(qx * qx) + f(qz * qz)))) * iy)) + f(f(t * f(f(qy * qz) - f(qw * qx))) * iz));
+  out[o + 2] = f(f(f(f(t * f(f(qx * qz) - f(qw * qy))) * ix) + f(f(t * f(f(qy * qz) + f(qw * qx))) * iy)) + f(f(1 - f(t * f(f(qx * qx) + f(qy * qy)))) * iz));
+}
+
+/** Matrix3x3.FromQuat of the quaternion stored at q[o..o+3]. */
+function m3FromQuat4(q: Float64Array, o: number, out: Float64Array) {
+  const x = q[o], y = q[o + 1], z = q[o + 2], w = q[o + 3];
+  const xx = f(x * x), yy = f(y * y), zz = f(z * z);
+  const xy = f(x * y), xz = f(x * z), yz = f(y * z);
+  const wx = f(w * x), wy = f(w * y), wz = f(w * z);
+  out[0] = f(1 - f(2 * f(yy + zz))); out[1] = f(2 * f(xy - wz)); out[2] = f(2 * f(xz + wy));
+  out[3] = f(2 * f(xy + wz)); out[4] = f(1 - f(2 * f(xx + zz))); out[5] = f(2 * f(yz - wx));
+  out[6] = f(2 * f(xz - wy)); out[7] = f(2 * f(yz + wx)); out[8] = f(1 - f(2 * f(xx + yy)));
+}
+
+/** Vec3.Normalized into out[o..o+2]. */
+function normalizeInto(x: number, y: number, z: number, out: Float64Array, o: number) {
+  const len = f(Math.sqrt(f(f(f(x * x) + f(y * y)) + f(z * z))));
+  if (len > 0) {
+    const i = f(1 / len);
+    out[o] = f(x * i); out[o + 1] = f(y * i); out[o + 2] = f(z * i);
+  } else {
+    out[o] = 0; out[o + 1] = 0; out[o + 2] = 0;
+  }
+}
+
+/** Joint.ToEulerXYZBullet on a row-major array, result into out[o..o+2]. */
+function eulerBulletInto(m: Float64Array, bulletElem: boolean, out: Float64Array, o: number) {
+  const e02 = bulletElem ? m[6] : m[2];
+  const e12 = bulletElem ? m[7] : m[5];
+  const e22 = m[8];
+  const e01 = bulletElem ? m[3] : m[1];
+  const e00 = m[0];
+  const e10 = bulletElem ? m[1] : m[3];
+  const e11 = m[4];
+  if (e02 < 1) {
+    if (e02 > -1) {
+      out[o] = f(Math.atan2(-e12, e22));
+      out[o + 1] = f(Math.asin(e02));
+      out[o + 2] = f(Math.atan2(-e01, e00));
+    } else {
+      out[o] = -f(Math.atan2(e10, e11));
+      out[o + 1] = -F_HALF_PI;
+      out[o + 2] = 0;
+    }
+  } else {
+    out[o] = f(Math.atan2(e10, e11));
+    out[o + 1] = F_HALF_PI;
+    out[o + 2] = 0;
   }
 }
 

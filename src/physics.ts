@@ -12,6 +12,7 @@ import * as THREE from 'three';
 import {
   PhysicsMode,
   PmxPhysicsBuilder,
+  initSolverKernel,
   Quat,
   RigidTransform,
   Vec3,
@@ -104,7 +105,11 @@ export class ModelPhysics {
   static async create(loaded: LoadedModel) {
     const mesh = physicsMesh(loaded);
     if (!mesh || !loaded.pmxSource) throw new Error('このモデルは物理演算に対応していません。');
-    const model = readPmx(await loaded.pmxSource());
+    // The float32 WebAssembly kernel (same results, about 3x faster). Browsers refuse to compile
+    // it synchronously on the main thread, so it is prepared here; without it the engine uses
+    // the TypeScript path.
+    const [buffer] = await Promise.all([loaded.pmxSource(), initSolverKernel()]);
+    const model = readPmx(buffer);
     if (model.boneNames.length !== mesh.skeleton.bones.length) {
       throw new Error(`ボーン数が一致しません (PMX ${model.boneNames.length} / 表示 ${mesh.skeleton.bones.length})`);
     }

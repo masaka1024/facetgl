@@ -12,3 +12,4 @@ export { readPmx, PmxPhysicsModel, PmxRigidBody, PmxJoint, PmxSoftBody } from '.
 export type { PmxSoftBodyAnchor } from './pmx';
 export { PmxPhysicsBuilder } from './builder';
 export type { BoneLink, BoneWorldFn } from './builder';
+export { initSolverKernel, solverKernelOptions } from './wasmSolver';
