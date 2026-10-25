@@ -20,3 +20,8 @@ Thumbs.db
 *.fbx
 *.FBX
 test-models/
+
+# Physics parity check outputs
+tools/physics-parity/.out/
+tools/physics-parity/dumper/bin/
+tools/physics-parity/dumper/obj/

@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!--
+    Physics parity dumper: runs the C# engine (mmd2gltf-cs-physics) on a fixed scenario and
+    writes every rigid body's state as raw float32, for comparison with the TypeScript port.
+    The engine is compiled from source: pass its folder with -p:EngineDir=... (check.mjs does).
+  -->
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <RollForward>Major</RollForward>
+    <Nullable>disable</Nullable>
+    <ImplicitUsings>disable</ImplicitUsings>
+    <LangVersion>9.0</LangVersion>
+    <OutputType>Exe</OutputType>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <AssemblyName>Dumper</AssemblyName>
+    <EngineDir Condition="'$(EngineDir)' == ''">$(MSBuildThisFileDirectory)../../../../mmd2gltf-cs-physics</EngineDir>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Dumper.cs" />
+    <!-- The engine's own minimal UnityEngine stand-in, so it builds without Unity -->
+    <Compile Include="$(EngineDir)/tools/compilecheck/UnityShim.cs" />
+    <Compile Include="$(EngineDir)/Assets/MmdPhysics/Core/*.cs" />
+    <Compile Include="$(EngineDir)/Assets/MmdPhysics/Pmx/*.cs" />
+  </ItemGroup>
+</Project>

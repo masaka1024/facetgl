@@ -144,6 +144,13 @@ npm run tauri build -- --target universal-apple-darwin
 GitHub の Actions タブから「Build desktop apps」を実行すると、Windows 版の `.exe` と Mac 版の `.dmg` をまとめて作れます。
 `v0.3.0` のようなタグを付けると、両方がそのバージョンのリリースに自動で添付されます。
 
+### 物理エンジンの一致テスト
+
+物理エンジン (`src/physics/engine/`) は C# 版 [mmd2gltf-cs-physics](https://github.com/masaka1024/mmd2gltf-cs-physics)
+とビット単位で同じ結果になるよう移植してあります。どちらかを直したときは
+`npm run parity -- --model <モデル.pmx> --engine <mmd2gltf-cs-physics のフォルダ>` で一致を確認してください
+(.NET SDK 8 以降が必要。詳しくは [tools/physics-parity/README.md](tools/physics-parity/README.md))。
+
 ## ライセンス
 
 [MIT License](LICENSE)。同梱しているサードパーティのソフトウェアについては
