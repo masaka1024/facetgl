@@ -34,15 +34,46 @@ function normalizePath(path: string) {
   return out.join('/');
 }
 
-function setWebFiles(files: { path: string; file: File }[]) {
-  webBlobUrls.forEach((u) => URL.revokeObjectURL(u));
-  webBlobUrls.clear();
-  webEntries.clear();
+// replace = false adds the files to the ones already loaded (a motion dropped onto an open
+// model must not take the model's own files away)
+function setWebFiles(files: { path: string; file: File }[], replace = true) {
+  if (replace) {
+    webBlobUrls.forEach((u) => URL.revokeObjectURL(u));
+    webBlobUrls.clear();
+    webEntries.clear();
+  }
   for (const { path, file } of files) {
     const full = normalizePath(`${VFS_ROOT}/${path}`);
     webEntries.set(full.toLowerCase(), { path: full, file });
   }
   return [...webEntries.values()].map((e) => e.path);
+}
+
+// Adds files under their own sub-folder so that they never clash with the model's files
+let webMergeCount = 0;
+function addWebFiles(files: { path: string; file: File }[]) {
+  const folder = `added${++webMergeCount}`;
+  setWebFiles(files.map(({ path, file }) => ({ path: `${folder}/${path}`, file })), false);
+  return files.map(({ path }) => normalizePath(`${VFS_ROOT}/${folder}/${path}`));
+}
+
+const isMotion = (p: string) => /\.vmd$/i.test(p);
+
+/** A dropped / picked set of files: the model to open (if any) and a motion (if any). */
+export interface PickedFiles {
+  model: string | null;
+  motion: string | null;
+}
+
+function pickFrom(paths: string[], extensions: string[]): PickedFiles {
+  return { model: chooseModel(paths, extensions), motion: paths.find(isMotion) ?? null };
+}
+
+// Web: files that contain a model replace the virtual file system; files without one
+// (a motion for the open model) are added to it
+function webPick(files: { path: string; file: File }[], extensions: string[]): PickedFiles {
+  const hasModel = files.some(({ path }) => extensions.includes(path.split('.').pop()?.toLowerCase() ?? ''));
+  return pickFrom(hasModel ? setWebFiles(files) : addWebFiles(files), extensions);
 }
 
 function webFile(path: string) {
@@ -157,36 +188,36 @@ function chooseModel(paths: string[], extensions: string[]) {
   return candidates[0] ?? null;
 }
 
-function pickWebFiles(extensions: string[], directory: boolean): Promise<string | null> {
+function pickWebFiles(extensions: string[], directory: boolean): Promise<PickedFiles | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
     if (directory) input.webkitdirectory = true;
-    else input.accept = extensions.map((e) => '.' + e).join(',') + ',image/*,.bin,.mtl,.tga,.bmp,.sph,.spa';
+    else input.accept = extensions.map((e) => '.' + e).join(',') + ',.vmd,image/*,.bin,.mtl,.tga,.bmp,.sph,.spa';
     input.addEventListener('change', () => {
       const files = [...(input.files ?? [])];
       if (files.length === 0) return resolve(null);
       // webkitRelativePath keeps the folder structure when a folder was picked
-      const paths = setWebFiles(files.map((file) => ({ path: file.webkitRelativePath || file.name, file })));
-      resolve(chooseModel(paths, extensions));
+      resolve(webPick(files.map((file) => ({ path: file.webkitRelativePath || file.name, file })), extensions));
     });
     input.click();
   });
 }
 
-export async function pickModelFile(filters: { name: string; extensions: string[] }[], extensions: string[]) {
+// null = cancelled
+export async function pickModelFile(filters: { name: string; extensions: string[] }[], extensions: string[]): Promise<PickedFiles | null> {
   if (isTauri) {
     const path = await open({ multiple: false, directory: false, filters });
-    return typeof path === 'string' ? path : null;
+    return typeof path === 'string' ? pickFrom([path], extensions) : null;
   }
   return pickWebFiles(extensions, false);
 }
 
-export async function pickModelFolder(extensions: string[]) {
+export async function pickModelFolder(extensions: string[]): Promise<PickedFiles | null> {
   if (isTauri) {
     const dir = await open({ multiple: false, directory: true });
-    return typeof dir === 'string' ? chooseModel(await expandFolders([dir]), extensions) : null;
+    return typeof dir === 'string' ? pickFrom(await expandFolders([dir]), extensions) : null;
   }
   return pickWebFiles(extensions, true);
 }
@@ -221,7 +252,7 @@ export async function onOpenFile(handler: (path: string) => void) {
 interface DropHandlers {
   enter: () => void;
   leave: () => void;
-  drop: (modelPath: string | null) => void;
+  drop: (picked: PickedFiles) => void;
 }
 
 export function onModelDrop(extensions: string[], handlers: DropHandlers) {
@@ -234,7 +265,7 @@ export function onModelDrop(extensions: string[], handlers: DropHandlers) {
       else if (payload.type === 'drop') {
         handlers.leave();
         // A dropped folder (e.g. a PMX with its textures) is searched for the model
-        expandFolders(payload.paths).then((paths) => handlers.drop(chooseModel(paths, extensions)));
+        expandFolders(payload.paths).then((paths) => handlers.drop(pickFrom(paths, extensions)));
       }
     });
     return;
@@ -257,7 +288,7 @@ export function onModelDrop(extensions: string[], handlers: DropHandlers) {
     depth = 0;
     handlers.leave();
     const files = await collectDroppedFiles(e.dataTransfer);
-    handlers.drop(chooseModel(setWebFiles(files), extensions));
+    handlers.drop(webPick(files, extensions));
   });
 }
 

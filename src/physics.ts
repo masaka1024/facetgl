@@ -28,7 +28,7 @@ const FIXED_TIME_STEP = 1 / 60;
 const ALIGN_ROT_CLAMP_ALPHA = 0.5;
 // Longest time advanced in one call: after a stall, the engine would otherwise run many
 // fixed steps at once and make the next frame even slower (Unity: MaxAllowedTimestep)
-const MAX_FRAME_TIME = 0.05;
+export const MAX_FRAME_TIME = 0.05;
 
 // --- MMD (left-handed) ⇄ three.js (right-handed) ---
 // MMDLoader mirrors the model across the XY plane: z is negated, and a rotation (x, y, z, w)
@@ -135,8 +135,16 @@ export class ModelPhysics {
     this.settle();
   }
 
-  dispose() {
-    this.mesh.pose();
+  // Places the bodies around the current (animated) pose without touching it. Used when a
+  // motion starts, loops or is seeked: the bones jump, and the bodies would otherwise be
+  // yanked across the distance in one step (the Unity importer's teleport reset).
+  realign() {
+    this.settle();
+  }
+
+  // restPose = false keeps the bones as they are (a motion will pose them again)
+  dispose(restPose = true) {
+    if (restPose) this.mesh.pose();
   }
 
   private settle() {
