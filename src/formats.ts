@@ -12,7 +12,7 @@ import { TGALoader } from 'three/addons/loaders/TGALoader.js';
 import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
 import { assetUrl, fileSize, listFiles, readFile, resolveUrl, textureSearchRoots } from './platform';
 import { renderInfoPanel, renderSceneInfoPanel, type ModelSource } from './info';
-import { applyMmdShading, buildMmdExtrasMaterials, type MmdExtrasMaterials } from './mmdShading';
+import { applyMmdShading, buildMmdExtrasMaterials, fixMmdLoaderToonRotation, type MmdExtrasMaterials } from './mmdShading';
 
 export const FORMATS = [
   { name: 'glTF / GLB', extensions: ['glb', 'gltf'] },
@@ -283,7 +283,9 @@ async function sceneModel(
 async function loadMmd(path: string): Promise<LoadedModel> {
   const failedFiles: string[] = [];
   const manager = textureManager(await indexFolder(path), failedFiles);
-  const mesh = await new MMDLoader(manager).loadAsync(assetUrl(path));
+  const loader = new MMDLoader(manager);
+  fixMmdLoaderToonRotation(loader);
+  const mesh = await loader.loadAsync(assetUrl(path));
   applyMmdShading(mesh);
   const isPmx = fileExtension(path) === 'pmx';
   const model = await sceneModel(path, isPmx ? 'PMX (MMD)' : 'PMD (MMD)', mesh, [], failedFiles);

@@ -137,6 +137,27 @@ function patchMaterial(material: THREE.Material, params: MmdShadingParams) {
 
 // --- PMX / PMD (materials created by MMDLoader) ---
 
+// MMDLoader turns each toon image 90° into a horizontal ramp, but draws the turned image on a
+// canvas of the ORIGINAL size. That only works for square images: a tall toon (e.g. 256×2048)
+// is clipped to a thin band in the middle, the row the shader reads is empty, and the material
+// renders black. Replace the rotation with one that swaps the canvas size.
+export function fixMmdLoaderToonRotation(loader: object) {
+  const builder = (loader as { meshBuilder?: { materialBuilder?: { _getRotatedImage?: unknown } } }).meshBuilder?.materialBuilder;
+  if (!builder || typeof builder._getRotatedImage !== 'function') return;
+  builder._getRotatedImage = (image: { width: number; height: number }) => {
+    const { width, height } = image;
+    const canvas = document.createElement('canvas');
+    canvas.width = height;
+    canvas.height = width;
+    const context = canvas.getContext('2d')!;
+    // Same turn as MMDLoader (90° clockwise): the top (lit end) of the image ends up on the right
+    context.translate(height / 2, width / 2);
+    context.rotate(0.5 * Math.PI);
+    context.drawImage(image as CanvasImageSource, -width / 2, -height / 2);
+    return context.getImageData(0, 0, height, width);
+  };
+}
+
 export function applyMmdShading(root: THREE.Object3D) {
   root.traverse((child) => {
     const mesh = child as THREE.Mesh;
