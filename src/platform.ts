@@ -11,6 +11,7 @@ import { homeDir } from '@tauri-apps/api/path';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { getCurrentWindow } from '@tauri-apps/api/window';
 import { open, message } from '@tauri-apps/plugin-dialog';
+import { t } from './i18n';
 
 export const isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
@@ -78,7 +79,7 @@ function webPick(files: { path: string; file: File }[], extensions: string[]): P
 
 function webFile(path: string) {
   const entry = webEntries.get(normalizePath(path).toLowerCase());
-  if (!entry) throw new Error(`${path}: ファイルが見つかりません (フォルダごと読み込むと解決することがあります)`);
+  if (!entry) throw new Error(t('error.fileNotFound', { path }));
   return entry.file;
 }
 

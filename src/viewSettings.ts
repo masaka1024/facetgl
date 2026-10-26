@@ -1,4 +1,5 @@
 import type { Projection } from './cameraRig';
+import { languageSetting, setLanguageSetting, t, type LanguageSetting } from './i18n';
 
 export interface ViewSettings {
   edgeScale: number;      // outline width in pixels per 1.0 of PMX edge size (0 = off)
@@ -54,14 +55,16 @@ export function setupViewSettingsPanel(initial: ViewSettings, onChange: (setting
   const fov = document.getElementById('fov') as HTMLInputElement;
   const fovValue = document.getElementById('fov-value')!;
   const projectionButtons = [...panel.querySelectorAll<HTMLButtonElement>('[data-projection]')];
+  const languageButtons = [...panel.querySelectorAll<HTMLButtonElement>('[data-language]')];
 
   const render = () => {
     edge.value = String(settings.edgeScale);
-    edgeValue.textContent = settings.edgeScale === 0 ? 'なし' : `${settings.edgeScale.toFixed(1)} px`;
+    edgeValue.textContent = settings.edgeScale === 0 ? t('view.edgeOff') : `${settings.edgeScale.toFixed(1)} px`;
     fov.value = String(settings.fov);
     fovValue.textContent = `${settings.fov}°`;
     fov.disabled = settings.projection === 'orthographic';
     for (const b of projectionButtons) b.classList.toggle('active', b.dataset.projection === settings.projection);
+    for (const b of languageButtons) b.classList.toggle('active', b.dataset.language === languageSetting());
   };
 
   const update = (changes: Partial<ViewSettings>) => {
@@ -80,10 +83,18 @@ export function setupViewSettingsPanel(initial: ViewSettings, onChange: (setting
   for (const b of projectionButtons) {
     b.addEventListener('click', () => update({ projection: b.dataset.projection as Projection }));
   }
+  // The language is kept apart from the view settings (初期値に戻す does not change it)
+  for (const b of languageButtons) {
+    b.addEventListener('click', () => {
+      setLanguageSetting(b.dataset.language as LanguageSetting);
+      render();
+    });
+  }
   document.getElementById('view-reset')!.addEventListener('click', () => update({ ...DEFAULT_VIEW_SETTINGS }));
 
   render();
   return {
+    refresh: render, // after the language changes
     toggleProjection: () =>
       update({ projection: settings.projection === 'perspective' ? 'orthographic' : 'perspective' }),
   };

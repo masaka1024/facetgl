@@ -14,6 +14,7 @@ import { assetUrl, fileSize, listFiles, readFile, resolveUrl, textureSearchRoots
 import { renderInfoPanel, renderSceneInfoPanel, type ModelSource } from './info';
 import { readGltfPhysics, type GltfPhysicsSource } from './gltfPhysics';
 import { applyMmdShading, buildMmdExtrasMaterials, fixMmdLoaderToonRotation, type MmdExtrasMaterials } from './mmdShading';
+import { t } from './i18n';
 
 export const FORMATS = [
   { name: 'glTF / GLB', extensions: ['glb', 'gltf'] },
@@ -88,7 +89,7 @@ export function loadModelFile(path: string, ctx: LoaderContext): Promise<LoadedM
     case 'stl':
       return loadStl(path);
     default:
-      return Promise.reject(new Error('対応していない形式です。'));
+      return Promise.reject(new Error(t('error.unsupportedFormat')));
   }
 }
 

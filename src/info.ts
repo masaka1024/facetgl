@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
 import type { VRMMeta } from '@pixiv/three-vrm';
+import { t } from './i18n';
 
 // --- Summary of the glTF file contents (from the raw JSON + binary data) ---
 
@@ -19,6 +20,10 @@ function formatBytes(n: number) {
   if (n >= 1024 * 1024) return (n / 1024 / 1024).toFixed(2) + ' MB';
   if (n >= 1024) return (n / 1024).toFixed(1) + ' KB';
   return n + ' B';
+}
+
+function seconds(duration: number) {
+  return t('info.seconds', { value: duration.toFixed(2) });
 }
 
 function formatCount(n: number) {
@@ -104,7 +109,7 @@ function list(header: string[], rows: string[][]) {
 
 function failedSection(failedFiles: string[]) {
   const box = el('div', undefined, 'warning');
-  box.append(el('div', `読み込めなかったファイル (${failedFiles.length})`, 'warning-title'));
+  box.append(el('div', t('info.failedFiles', { count: failedFiles.length }), 'warning-title'));
   for (const name of failedFiles) box.append(el('div', name));
   return box;
 }
@@ -134,38 +139,38 @@ export function renderInfoPanel(container: HTMLElement, src: ModelSource, gltf: 
 
   const joints = (json.skins ?? []).reduce((sum: number, s: any) => sum + s.joints.length, 0);
 
-  container.append(section('ファイル', table([
-    ['サイズ', formatBytes(src.totalBytes)],
-    ['形式', src.glbBin ? 'GLB (バイナリ)' : 'glTF (JSON)'],
-    ['glTF バージョン', json.asset?.version ?? '-'],
-    ['作成ツール', json.asset?.generator ?? '-'],
-    ['著作権', json.asset?.copyright ?? '-'],
-    ['使用拡張', (json.extensionsUsed ?? []).join(', ') || 'なし'],
-    ['必須拡張', (json.extensionsRequired ?? []).join(', ') || 'なし'],
+  container.append(section(t('info.file'), table([
+    [t('info.size'), formatBytes(src.totalBytes)],
+    [t('info.format'), src.glbBin ? t('info.formatGlb') : t('info.formatGltf')],
+    [t('info.gltfVersion'), json.asset?.version ?? '-'],
+    [t('info.generator'), json.asset?.generator ?? '-'],
+    [t('info.copyright'), json.asset?.copyright ?? '-'],
+    [t('info.extensionsUsed'), (json.extensionsUsed ?? []).join(', ') || t('info.none')],
+    [t('info.extensionsRequired'), (json.extensionsRequired ?? []).join(', ') || t('info.none')],
   ]), true));
 
-  if (vrmMeta) container.append(section('VRM 情報 (利用条件)', vrmMetaTable(vrmMeta), true));
-  if (json.extras?.mmd) container.append(section('MMD 情報 (extras.mmd)', mmdExtrasInfo(json), true));
+  if (vrmMeta) container.append(section(t('info.vrm'), vrmMetaTable(vrmMeta), true));
+  if (json.extras?.mmd) container.append(section(t('info.mmd'), mmdExtrasInfo(json), true));
 
-  container.append(section('概要', table([
-    ['ノード', formatCount(json.nodes?.length ?? 0)],
-    ['メッシュ', formatCount(json.meshes?.length ?? 0)],
-    ['プリミティブ (描画単位)', formatCount(primitives.length)],
-    ['頂点', formatCount(vertices)],
-    ['三角形', formatCount(triangles)],
-    ['マテリアル', formatCount(json.materials?.length ?? 0)],
-    ['テクスチャ / 画像', `${json.textures?.length ?? 0} / ${json.images?.length ?? 0}`],
-    ['スキン / ボーン', `${json.skins?.length ?? 0} / ${joints}`],
-    ['モーフ', `${morphNames.length} (${formatBytes(morphBytes)})`],
-    ['アニメーション', formatCount(json.animations?.length ?? 0)],
+  container.append(section(t('info.summary'), table([
+    [t('info.nodes'), formatCount(json.nodes?.length ?? 0)],
+    [t('info.meshes'), formatCount(json.meshes?.length ?? 0)],
+    [t('info.primitives'), formatCount(primitives.length)],
+    [t('info.vertices'), formatCount(vertices)],
+    [t('info.triangles'), formatCount(triangles)],
+    [t('info.materials'), formatCount(json.materials?.length ?? 0)],
+    [t('info.texturesImages'), `${json.textures?.length ?? 0} / ${json.images?.length ?? 0}`],
+    [t('info.skinsBones'), `${json.skins?.length ?? 0} / ${joints}`],
+    [t('info.morphs'), `${morphNames.length} (${formatBytes(morphBytes)})`],
+    [t('info.animations'), formatCount(json.animations?.length ?? 0)],
   ]), true));
 
   const renderStats = el('div');
   renderStats.id = 'render-stats';
-  container.append(section('描画状況 (リアルタイム)', renderStats, true));
+  container.append(section(t('info.renderStats'), renderStats, true));
 
-  container.append(section(`マテリアル (${json.materials?.length ?? 0})`, list(
-    ['#', '名前', '種類', '透過', '両面'],
+  container.append(section(t('info.materialsCount', { count: json.materials?.length ?? 0 }), list(
+    ['#', t('info.name'), t('info.type'), t('info.alpha'), t('info.doubleSided')],
     (json.materials ?? []).map((m: any, i: number) => [
       String(i),
       m.name ?? '',
@@ -189,20 +194,20 @@ export function renderInfoPanel(container: HTMLElement, src: ModelSource, gltf: 
       bytes ? formatBytes(bytes.length) : '-',
     ];
   });
-  container.append(section(`画像 (${imageRows.length}, ${formatBytes(imageTotal)})`, list(
-    ['#', '名前', '解像度', 'サイズ'], imageRows
+  container.append(section(t('info.imagesCount', { count: imageRows.length, size: formatBytes(imageTotal) }), list(
+    ['#', t('info.name'), t('info.resolution'), t('info.size')], imageRows
   )));
 
-  container.append(section(`モーフ (${morphNames.length})`, list(
-    ['#', '名前'], morphNames.map((n, i) => [String(i), n])
+  container.append(section(t('info.morphsCount', { count: morphNames.length }), list(
+    ['#', t('info.name')], morphNames.map((n, i) => [String(i), n])
   )));
 
-  container.append(section(`アニメーション (${gltf.animations.length})`, list(
-    ['#', '名前', '長さ', 'トラック'],
-    gltf.animations.map((clip, i) => [String(i), clip.name, clip.duration.toFixed(2) + ' 秒', String(clip.tracks.length)])
+  container.append(section(t('info.animationsCount', { count: gltf.animations.length }), list(
+    ['#', t('info.name'), t('info.duration'), t('info.tracks')],
+    gltf.animations.map((clip, i) => [String(i), clip.name, seconds(clip.duration), String(clip.tracks.length)])
   )));
 
-  container.append(section(`ノード階層 (${json.nodes?.length ?? 0})`, nodeTree(json)));
+  container.append(section(t('info.nodeTree', { count: json.nodes?.length ?? 0 }), nodeTree(json)));
 }
 
 function morphTargetNames(json: any, gltf: GLTF): string[] {
@@ -254,18 +259,18 @@ function mmdExtrasInfo(json: any) {
 
   const box = el('div');
   box.append(table([
-    ['表示', 'MMD 材質 (トゥーン・スフィア・エッジ) で表示可能。上部の「MMD表示」で切替'],
-    ['変換ツール', json.asset?.generator ?? '-'],
-    ['モデル名', mmd.name ?? '-'],
-    ['英語名', mmd.nameEn || '-'],
-    ['元形式', `${String(mmd.format ?? '-').toUpperCase()} ${mmd.version ?? ''}`.trim()],
+    [t('info.mmdDisplay'), t('info.mmdDisplayValue')],
+    [t('info.converter'), json.asset?.generator ?? '-'],
+    [t('info.modelName'), mmd.name ?? '-'],
+    [t('info.englishName'), mmd.nameEn || '-'],
+    [t('info.originalFormat'), `${String(mmd.format ?? '-').toUpperCase()} ${mmd.version ?? ''}`.trim()],
     ['unitScale', String(mmd.unitScale ?? '-')],
-    ['MMD 材質', `${mmdMaterials} / ${materials.length}`],
-    ['MMD ボーン', formatCount(mmdBones)],
-    ['モーフ', count(mmd.morphs)],
-    ['表示枠', count(mmd.displayFrames)],
-    ['剛体 / ジョイント', `${count(mmd.rigidBodies)} / ${count(mmd.joints)}`],
-    ['physicsGltf', mmd.physicsGltf ? 'あり' : 'なし'],
+    [t('info.mmdMaterials'), `${mmdMaterials} / ${materials.length}`],
+    [t('info.mmdBones'), formatCount(mmdBones)],
+    [t('info.morphs'), count(mmd.morphs)],
+    [t('info.displayFrames'), count(mmd.displayFrames)],
+    [t('info.rigidBodiesJoints'), `${count(mmd.rigidBodies)} / ${count(mmd.joints)}`],
+    ['physicsGltf', mmd.physicsGltf ? t('info.yes') : t('info.none')],
   ]));
   if (mmd.comment) box.append(el('div', mmd.comment.replace(/\r\n/g, '\n'), 'comment'));
   return box;
@@ -273,7 +278,7 @@ function mmdExtrasInfo(json: any) {
 
 // VRM 0.x and 1.0 use different meta fields, so list every simple value as-is
 function vrmMetaTable(meta: VRMMeta) {
-  const rows: [string, string][] = [['VRM バージョン', meta.metaVersion === '1' ? '1.0' : '0.x']];
+  const rows: [string, string][] = [[t('info.vrmVersion'), meta.metaVersion === '1' ? '1.0' : '0.x']];
   for (const [key, value] of Object.entries(meta)) {
     if (key === 'metaVersion') continue;
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
@@ -334,29 +339,29 @@ export function renderSceneInfoPanel(container: HTMLElement, src: SceneSource) {
     triangles += (g.index ? g.index.count : count) / 3;
   }
 
-  container.append(section('ファイル', table([
-    ['サイズ', formatBytes(src.totalBytes)],
-    ['形式', src.format],
+  container.append(section(t('info.file'), table([
+    [t('info.size'), formatBytes(src.totalBytes)],
+    [t('info.format'), src.format],
   ]), true));
 
-  container.append(section('概要', table([
-    ['ノード', formatCount(nodes)],
-    ['メッシュ', formatCount(meshes.length)],
-    ['頂点', formatCount(vertices)],
-    ['三角形', formatCount(triangles)],
-    ['マテリアル', formatCount(materials.size)],
-    ['テクスチャ', formatCount(textures.size)],
-    ['ボーン', formatCount(bones.size)],
-    ['モーフ', formatCount(morphNames.length)],
-    ['アニメーション', formatCount(src.animations.length)],
+  container.append(section(t('info.summary'), table([
+    [t('info.nodes'), formatCount(nodes)],
+    [t('info.meshes'), formatCount(meshes.length)],
+    [t('info.vertices'), formatCount(vertices)],
+    [t('info.triangles'), formatCount(triangles)],
+    [t('info.materials'), formatCount(materials.size)],
+    [t('info.textures'), formatCount(textures.size)],
+    [t('info.bones'), formatCount(bones.size)],
+    [t('info.morphs'), formatCount(morphNames.length)],
+    [t('info.animations'), formatCount(src.animations.length)],
   ]), true));
 
   const renderStats = el('div');
   renderStats.id = 'render-stats';
-  container.append(section('描画状況 (リアルタイム)', renderStats, true));
+  container.append(section(t('info.renderStats'), renderStats, true));
 
-  container.append(section(`マテリアル (${materials.size})`, list(
-    ['#', '名前', '種類', '透過', '両面'],
+  container.append(section(t('info.materialsCount', { count: materials.size }), list(
+    ['#', t('info.name'), t('info.type'), t('info.alpha'), t('info.doubleSided')],
     [...materials].map((m, i) => [
       String(i),
       m.name,
@@ -366,25 +371,25 @@ export function renderSceneInfoPanel(container: HTMLElement, src: SceneSource) {
     ])
   )));
 
-  container.append(section(`テクスチャ (${textures.size})`, list(
-    ['#', '名前', '解像度'],
-    [...textures].map((t, i) => {
-      const image = t.image as { width?: number; height?: number; src?: string } | undefined;
-      const name = t.name || (image?.src ? decodeURIComponent(image.src.split('/').pop() ?? '') : '');
-      return [String(i), name, image?.width ? `${image.width}×${image.height}` : '読み込み中'];
+  container.append(section(t('info.texturesCount', { count: textures.size }), list(
+    ['#', t('info.name'), t('info.resolution')],
+    [...textures].map((texture, i) => {
+      const image = texture.image as { width?: number; height?: number; src?: string } | undefined;
+      const name = texture.name || (image?.src ? decodeURIComponent(image.src.split('/').pop() ?? '') : '');
+      return [String(i), name, image?.width ? `${image.width}×${image.height}` : t('info.textureLoading')];
     })
   )));
 
-  container.append(section(`モーフ (${morphNames.length})`, list(
-    ['#', '名前'], morphNames.map((n, i) => [String(i), n])
+  container.append(section(t('info.morphsCount', { count: morphNames.length }), list(
+    ['#', t('info.name')], morphNames.map((n, i) => [String(i), n])
   )));
 
-  container.append(section(`アニメーション (${src.animations.length})`, list(
-    ['#', '名前', '長さ', 'トラック'],
-    src.animations.map((clip, i) => [String(i), clip.name, clip.duration.toFixed(2) + ' 秒', String(clip.tracks.length)])
+  container.append(section(t('info.animationsCount', { count: src.animations.length }), list(
+    ['#', t('info.name'), t('info.duration'), t('info.tracks')],
+    src.animations.map((clip, i) => [String(i), clip.name, seconds(clip.duration), String(clip.tracks.length)])
   )));
 
-  container.append(section(`ノード階層 (${nodes})`, objectTree(src.object)));
+  container.append(section(t('info.nodeTree', { count: nodes }), objectTree(src.object)));
 }
 
 function objectTree(object: THREE.Object3D) {
@@ -411,9 +416,9 @@ export function updateRenderStats(renderer: THREE.WebGLRenderer) {
   if (!target || !target.isConnected) return;
   const info = renderer.info;
   target.replaceChildren(table([
-    ['ドローコール', formatCount(info.render.calls)],
-    ['描画三角形', formatCount(info.render.triangles)],
-    ['GPU ジオメトリ', formatCount(info.memory.geometries)],
-    ['GPU テクスチャ', formatCount(info.memory.textures)],
+    [t('info.drawCalls'), formatCount(info.render.calls)],
+    [t('info.drawnTriangles'), formatCount(info.render.triangles)],
+    [t('info.gpuGeometries'), formatCount(info.memory.geometries)],
+    [t('info.gpuTextures'), formatCount(info.memory.textures)],
   ]));
 }

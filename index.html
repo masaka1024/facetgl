@@ -123,44 +123,53 @@
 </head>
 <body>
     <div id="drop-zone">
-        <div class="app-only">3D モデルのファイル (またはフォルダ) をドロップ、または「開く」から選択してください
-            <small>MMD モデルを開いたあとにモーション (VMD) をドロップすると再生できます</small>
+        <div class="app-only">
+            <span data-i18n="drop.app">3D モデルのファイル (またはフォルダ) をドロップ、または「開く」から選択してください</span>
+            <small data-i18n="drop.appNote">MMD モデルを開いたあとにモーション (VMD) をドロップすると再生できます</small>
         </div>
         <div class="web-only">
-            3D モデルのファイル (またはフォルダ) をドロップしてください
-            <small>PMX / FBX / OBJ や外部テクスチャを使う .gltf はフォルダごとドロップ。MMD モデルを開いたあとにモーション (VMD) をドロップすると再生できます。ファイルはブラウザ内だけで読み込まれ、送信されません</small>
+            <span data-i18n="drop.web">3D モデルのファイル (またはフォルダ) をドロップしてください</span>
+            <small data-i18n="drop.webNote">PMX / FBX / OBJ や外部テクスチャを使う .gltf はフォルダごとドロップ。MMD モデルを開いたあとにモーション (VMD) をドロップすると再生できます。ファイルはブラウザ内だけで読み込まれ、送信されません</small>
         </div>
     </div>
-    <a id="project-link" class="web-only" href="https://github.com/masaka1024/facetgl" target="_blank" rel="noopener">FacetGL on GitHub (デスクトップ版)</a>
+    <a id="project-link" class="web-only" href="https://github.com/masaka1024/facetgl" target="_blank" rel="noopener" data-i18n="link.project">FacetGL on GitHub (デスクトップ版)</a>
     <div id="toolbar">
-        <button id="open-button" title="Ctrl+O">開く</button>
-        <button id="open-folder-button" title="PMX などテクスチャが別ファイルのモデル向け">フォルダを開く</button>
-        <button id="info-button" title="I">情報</button>
-        <button id="view-button">表示設定</button>
-        <button id="mmd-button" title="extras.mmd（PMX の材質情報）を検出しました。クリックで MMD 表示と glTF 標準表示を切り替えます">MMD表示: ON</button>
-        <button id="physics-button" title="F: 髪やスカートの剛体を物理演算で動かします (試験機能)">物理: OFF</button>
-        <button id="physics-reset" title="R: 姿勢を初期状態に戻して物理をやり直します">物理リセット</button>
+        <button id="open-button" title="Ctrl+O" data-i18n="toolbar.open">開く</button>
+        <button id="open-folder-button" data-i18n="toolbar.openFolder" data-i18n-title="toolbar.openFolderTitle" title="PMX などテクスチャが別ファイルのモデル向け">フォルダを開く</button>
+        <button id="info-button" title="I" data-i18n="toolbar.info">情報</button>
+        <button id="view-button" data-i18n="toolbar.view">表示設定</button>
+        <button id="mmd-button" data-i18n-title="mmd.title" title="extras.mmd（PMX の材質情報）を検出しました。クリックで MMD 表示と glTF 標準表示を切り替えます">MMD表示: ON</button>
+        <button id="physics-button" data-i18n="physics.off" data-i18n-title="physics.title" title="F: 髪やスカートの剛体を物理演算で動かします (試験機能)">物理: OFF</button>
+        <button id="physics-reset" data-i18n="physics.reset" data-i18n-title="physics.resetTitle" title="R: 姿勢を初期状態に戻して物理をやり直します">物理リセット</button>
         <div id="info">FacetGL</div>
     </div>
     <div id="view-panel">
         <div class="row">
-            <div class="label"><span>輪郭線の太さ</span><span id="edge-scale-value"></span></div>
+            <div class="label"><span data-i18n="view.edge">輪郭線の太さ</span><span id="edge-scale-value"></span></div>
             <input id="edge-scale" type="range" min="0" max="4" step="0.1">
-            <div class="note">MMD 表示のとき。エッジサイズ 1.0 あたりの線の幅 (MMD 相当は 1.0 px)</div>
+            <div class="note" data-i18n="view.edgeNote">MMD 表示のとき。エッジサイズ 1.0 あたりの線の幅 (MMD 相当は 1.0 px)</div>
         </div>
         <div class="row">
-            <div class="label"><span>投影</span><span>P キーで切替</span></div>
+            <div class="label"><span data-i18n="view.projection">投影</span><span data-i18n="view.projectionKey">P キーで切替</span></div>
             <div class="segmented">
-                <button data-projection="perspective">透視</button>
-                <button data-projection="orthographic">平行</button>
+                <button data-projection="perspective" data-i18n="view.perspective">透視</button>
+                <button data-projection="orthographic" data-i18n="view.orthographic">平行</button>
             </div>
         </div>
         <div class="row">
-            <div class="label"><span>視野角</span><span id="fov-value"></span></div>
+            <div class="label"><span data-i18n="view.fov">視野角</span><span id="fov-value"></span></div>
             <input id="fov" type="range" min="10" max="90" step="1">
-            <div class="note">透視のとき。MMD の初期値は 30°</div>
+            <div class="note" data-i18n="view.fovNote">透視のとき。MMD の初期値は 30°</div>
         </div>
-        <button id="view-reset">初期値に戻す</button>
+        <div class="row">
+            <div class="label"><span data-i18n="view.language">言語 (Language)</span><span></span></div>
+            <div class="segmented">
+                <button data-language="auto" data-i18n="view.languageAuto">自動</button>
+                <button data-language="ja">日本語</button>
+                <button data-language="en">English</button>
+            </div>
+        </div>
+        <button id="view-reset" data-i18n="view.reset">初期値に戻す</button>
     </div>
     <div id="info-panel"></div>
     <div id="physics-hint"></div>
@@ -169,7 +178,7 @@
         <select id="anim-clip"></select>
         <input id="anim-seek" type="range" min="0" max="1" step="0.001" value="0">
         <span id="anim-time">0.00 / 0.00</span>
-        <select id="anim-speed" title="再生速度">
+        <select id="anim-speed" title="再生速度" data-i18n-title="anim.speed">
             <option value="0.25">×0.25</option>
             <option value="0.5">×0.5</option>
             <option value="1" selected>×1</option>
