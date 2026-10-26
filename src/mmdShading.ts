@@ -297,6 +297,11 @@ export async function buildMmdExtrasMaterials(gltf: GLTF): Promise<MmdExtrasMate
 
   // Pair every mesh material with its MMD replacement
   const slots: { mesh: THREE.Mesh; slot: number; original: THREE.Material; mmd: THREE.Material }[] = [];
+  // MMD draws materials in PMX order. GLTFLoader turns each primitive (= PMX material, in the
+  // same order) into its own mesh, and three.js sorts transparent meshes by distance instead,
+  // so once the model moves an eyebrow could be drawn before the skin under it, hide that skin
+  // through the depth buffer and blend with whatever is behind (dark eyebrows). Pin the order.
+  const drawOrder = new Map<THREE.Mesh, { mmd: number; original: number }>();
   const meshes: THREE.Mesh[] = [];
   gltf.scene.traverse((child) => {
     if ((child as THREE.Mesh).isMesh) meshes.push(child as THREE.Mesh);
@@ -311,6 +316,7 @@ export async function buildMmdExtrasMaterials(gltf: GLTF): Promise<MmdExtrasMate
       if (!byIndex.has(index)) byIndex.set(index, build(index));
       const mmd = await byIndex.get(index)!;
       if (mmd) slots.push({ mesh, slot, original, mmd });
+      if (mmd && !Array.isArray(mesh.material)) drawOrder.set(mesh, { mmd: index, original: mesh.renderOrder });
     }
   }
 
@@ -322,6 +328,7 @@ export async function buildMmdExtrasMaterials(gltf: GLTF): Promise<MmdExtrasMate
   return {
     setEnabled: (enabled) => {
       for (const s of slots) assign(s.mesh, s.slot, enabled ? s.mmd : s.original);
+      for (const [mesh, order] of drawOrder) mesh.renderOrder = enabled ? order.mmd : order.original;
     },
     dispose: () => {
       // Whichever set is not on the meshes is not reached by the normal cleanup
