@@ -238,7 +238,8 @@ export async function buildMmdExtrasMaterials(gltf: GLTF): Promise<MmdExtrasMate
     const pbr = def.pbrMetallicRoughness ?? {};
     const factor: number[] = pbr.baseColorFactor ?? [1, 1, 1, 1];
     // origTexture is the unprocessed original image (alpha not pre-baked)
-    const mapIndex = typeof mmd.origTexture === 'number' && mmd.origTexture >= 0 ? mmd.origTexture : pbr.baseColorTexture?.index;
+    const usesOrigTexture = typeof mmd.origTexture === 'number' && mmd.origTexture >= 0;
+    const mapIndex = usesOrigTexture ? mmd.origTexture : pbr.baseColorTexture?.index;
     const map = mapIndex !== undefined ? await texture(mapIndex) : null;
 
     const sphereMode = mmd.sphereMode === SPHERE_MULTIPLY || mmd.sphereMode === SPHERE_ADD ? mmd.sphereMode : 0;
@@ -268,7 +269,18 @@ export async function buildMmdExtrasMaterials(gltf: GLTF): Promise<MmdExtrasMate
     // Unknown future alphaClass values are treated as "mask" (per the extras.mmd schema)
     const alphaClass = (mmd.alphaClass ?? (def.alphaMode ?? 'OPAQUE').toLowerCase()) as string;
     if (alphaClass === 'blend' || material.opacity < 1) material.transparent = true;
-    else if (alphaClass !== 'opaque') material.alphaTest = def.alphaCutoff ?? 0.5;
+    else if (alphaClass !== 'opaque') {
+      if (usesOrigTexture) {
+        // alphaCutoff belongs to the converter's pre-baked texture, whose semi-transparent pixels
+        // were already mixed with the surrounding color. The original image is not, so a cutoff
+        // would draw faint ink (e.g. eyebrows at ~25% alpha) fully opaque and too dark.
+        // Blend it instead, as MMD and MMDLoader do; the tiny alphaTest only drops empty pixels.
+        material.transparent = true;
+        material.alphaTest = 0.01;
+      } else {
+        material.alphaTest = def.alphaCutoff ?? 0.5;
+      }
+    }
 
     // Read by OutlineEffect; same mapping as MMDLoader
     const edge: number[] = mmd.edgeColor ?? [0, 0, 0, 1];
