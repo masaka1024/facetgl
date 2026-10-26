@@ -46,6 +46,9 @@ jobs:
     env:
       # Tag builds: the pushed tag. Manual runs: the release_tag input (may be empty).
       RELEASE_TAG: ${{ github.ref_type == 'tag' && github.ref_name || inputs.release_tag }}
+      # Shown in the app's window title (vite.config.ts) and used in the artifact name
+      BUILD_BRANCH: ${{ github.head_ref || github.ref_name }}
+      BUILD_COMMIT: ${{ github.event.pull_request.head.sha || github.sha }}
 
     steps:
       - uses: actions/checkout@v4
@@ -74,7 +77,7 @@ jobs:
       # told apart (the same label is shown in the app's window title)
       - name: Name the artifact
         shell: bash
-        run: echo "ARTIFACT_NAME=FacetGL-${{ matrix.name }}-${GITHUB_REF_NAME//\//-}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+        run: echo "ARTIFACT_NAME=FacetGL-${{ matrix.name }}-${BUILD_BRANCH//\//-}-${BUILD_COMMIT::7}" >> "$GITHUB_ENV"
 
       - uses: actions/upload-artifact@v4
         with:

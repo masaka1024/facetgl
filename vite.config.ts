@@ -15,9 +15,12 @@ function git(args: string) {
 }
 
 const version = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version as string;
-const commit = (process.env.GITHUB_SHA ?? git('rev-parse HEAD')).slice(0, 7);
+// BUILD_COMMIT / BUILD_BRANCH: set by the desktop workflow (for pull request runs, the pull
+// request's own branch and commit rather than GitHub's temporary merge ref)
+const env = process.env;
+const commit = (env.BUILD_COMMIT || env.GITHUB_SHA || git('rev-parse HEAD')).slice(0, 7);
 const branch =
-  process.env.GITHUB_REF_TYPE === 'tag' ? '' : (process.env.GITHUB_REF_NAME ?? git('rev-parse --abbrev-ref HEAD'));
+  env.GITHUB_REF_TYPE === 'tag' ? '' : env.BUILD_BRANCH || env.GITHUB_REF_NAME || git('rev-parse --abbrev-ref HEAD');
 const buildLabel = [`v${version}`, branch && branch !== 'main' && branch !== 'HEAD' ? branch : '', commit ? `(${commit})` : '']
   .filter(Boolean)
   .join(' ');
