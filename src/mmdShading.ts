@@ -238,7 +238,8 @@ export async function buildMmdExtrasMaterials(gltf: GLTF): Promise<MmdExtrasMate
     const pbr = def.pbrMetallicRoughness ?? {};
     const factor: number[] = pbr.baseColorFactor ?? [1, 1, 1, 1];
     // origTexture is the unprocessed original image (alpha not pre-baked)
-    const mapIndex = typeof mmd.origTexture === 'number' && mmd.origTexture >= 0 ? mmd.origTexture : pbr.baseColorTexture?.index;
+    const usesOrigTexture = typeof mmd.origTexture === 'number' && mmd.origTexture >= 0;
+    const mapIndex = usesOrigTexture ? mmd.origTexture : pbr.baseColorTexture?.index;
     const map = mapIndex !== undefined ? await texture(mapIndex) : null;
 
     const sphereMode = mmd.sphereMode === SPHERE_MULTIPLY || mmd.sphereMode === SPHERE_ADD ? mmd.sphereMode : 0;
@@ -268,7 +269,18 @@ export async function buildMmdExtrasMaterials(gltf: GLTF): Promise<MmdExtrasMate
     // Unknown future alphaClass values are treated as "mask" (per the extras.mmd schema)
     const alphaClass = (mmd.alphaClass ?? (def.alphaMode ?? 'OPAQUE').toLowerCase()) as string;
     if (alphaClass === 'blend' || material.opacity < 1) material.transparent = true;
-    else if (alphaClass !== 'opaque') material.alphaTest = def.alphaCutoff ?? 0.5;
+    else if (alphaClass !== 'opaque') {
+      if (usesOrigTexture) {
+        // alphaCutoff belongs to the converter's pre-baked texture, whose semi-transparent pixels
+        // were already mixed with the surrounding color. The original image is not, so a cutoff
+        // would draw faint ink (e.g. eyebrows at ~25% alpha) fully opaque and too dark.
+        // Blend it instead, as MMD and MMDLoader do; the tiny alphaTest only drops empty pixels.
+        material.transparent = true;
+        material.alphaTest = 0.01;
+      } else {
+        material.alphaTest = def.alphaCutoff ?? 0.5;
+      }
+    }
 
     // Read by OutlineEffect; same mapping as MMDLoader
     const edge: number[] = mmd.edgeColor ?? [0, 0, 0, 1];
@@ -285,6 +297,11 @@ export async function buildMmdExtrasMaterials(gltf: GLTF): Promise<MmdExtrasMate
 
   // Pair every mesh material with its MMD replacement
   const slots: { mesh: THREE.Mesh; slot: number; original: THREE.Material; mmd: THREE.Material }[] = [];
+  // MMD draws materials in PMX order. GLTFLoader turns each primitive (= PMX material, in the
+  // same order) into its own mesh, and three.js sorts transparent meshes by distance instead,
+  // so once the model moves an eyebrow could be drawn before the skin under it, hide that skin
+  // through the depth buffer and blend with whatever is behind (dark eyebrows). Pin the order.
+  const drawOrder = new Map<THREE.Mesh, { mmd: number; original: number }>();
   const meshes: THREE.Mesh[] = [];
   gltf.scene.traverse((child) => {
     if ((child as THREE.Mesh).isMesh) meshes.push(child as THREE.Mesh);
@@ -299,6 +316,7 @@ export async function buildMmdExtrasMaterials(gltf: GLTF): Promise<MmdExtrasMate
       if (!byIndex.has(index)) byIndex.set(index, build(index));
       const mmd = await byIndex.get(index)!;
       if (mmd) slots.push({ mesh, slot, original, mmd });
+      if (mmd && !Array.isArray(mesh.material)) drawOrder.set(mesh, { mmd: index, original: mesh.renderOrder });
     }
   }
 
@@ -310,6 +328,7 @@ export async function buildMmdExtrasMaterials(gltf: GLTF): Promise<MmdExtrasMate
   return {
     setEnabled: (enabled) => {
       for (const s of slots) assign(s.mesh, s.slot, enabled ? s.mmd : s.original);
+      for (const [mesh, order] of drawOrder) mesh.renderOrder = enabled ? order.mmd : order.original;
     },
     dispose: () => {
       // Whichever set is not on the meshes is not reached by the normal cleanup
