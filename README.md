@@ -1,11 +1,9 @@
 # FacetGL
 
+**日本語** | [English](README.en.md)
+
 glTF / GLB を中心に、VRM・MMD (PMX/PMD)・FBX・OBJ・STL を開ける Windows / macOS 向けの 3D モデルビューアです。
 [Tauri](https://tauri.app/) と [three.js](https://threejs.org/) で作られています。
-
-*A lightweight desktop 3D model viewer for glTF / GLB, VRM, MMD (PMX/PMD), FBX, OBJ and STL,
-built with Tauri and three.js. It reproduces MMD's own shading for PMX files and for glTF
-files converted by [mmd2gltf](https://github.com/masaka1024/mmd2gltf-gui).*
 
 **🌐 Web 版: <https://masaka1024.github.io/facetgl/>** — インストール不要。ブラウザにモデルをドロップするだけで開けます
 (ファイルはブラウザ内だけで読み込まれ、どこにも送信されません)。
