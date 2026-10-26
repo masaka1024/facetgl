@@ -70,9 +70,15 @@ jobs:
         shell: bash
         run: npm run tauri build -- ${{ matrix.build_args }}
 
+      # Artifact names carry the branch and commit, so downloads from different runs can be
+      # told apart (the same label is shown in the app's window title)
+      - name: Name the artifact
+        shell: bash
+        run: echo "ARTIFACT_NAME=FacetGL-${{ matrix.name }}-${GITHUB_REF_NAME//\//-}-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
+
       - uses: actions/upload-artifact@v4
         with:
-          name: FacetGL-${{ matrix.name }}
+          name: ${{ env.ARTIFACT_NAME }}
           path: ${{ matrix.bundle }}
 
       - name: Add to release

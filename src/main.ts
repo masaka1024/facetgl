@@ -68,6 +68,10 @@ const modelDrag = {
 
 // --- Initialization ---
 function init() {
+  // Which build this is (version, branch, commit), so that test builds can be told apart
+  setWindowTitle(`FacetGL ${__BUILD_LABEL__}`);
+  document.getElementById('info')!.textContent = `FacetGL ${__BUILD_LABEL__}`;
+
   // 1. Scene
   scene = new THREE.Scene();
   scene.background = new THREE.Color(0x1a1a1a);
@@ -279,7 +283,7 @@ async function loadModel(path: string) {
     document.body.classList.add('loaded');
     info.textContent = fileName;
     shownFailedCount = 0;
-    setWindowTitle(`${fileName} - FacetGL`);
+    setWindowTitle(`${fileName} - FacetGL ${__BUILD_LABEL__}`);
     console.log('Model loaded:', path);
   } catch (error) {
     console.error('Error loading model:', error);
