@@ -12,6 +12,7 @@ import { TGALoader } from 'three/addons/loaders/TGALoader.js';
 import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
 import { assetUrl, fileSize, listFiles, readFile, resolveUrl, textureSearchRoots } from './platform';
 import { renderInfoPanel, renderSceneInfoPanel, type ModelSource } from './info';
+import { readGltfPhysics, type GltfPhysicsSource } from './gltfPhysics';
 import { applyMmdShading, buildMmdExtrasMaterials, fixMmdLoaderToonRotation, type MmdExtrasMaterials } from './mmdShading';
 
 export const FORMATS = [
@@ -45,6 +46,10 @@ export interface LoadedModel {
   // PMX: the raw file, read again when physics is turned on (the physics engine parses the
   // rigid bodies and joints itself, in MMD's own coordinates)
   pmxSource?: () => Promise<ArrayBuffer>;
+  // glTF from mmd2gltf: the PMX rigid bodies and joints read from extras.mmd
+  gltfPhysics?: GltfPhysicsSource;
+  // glTF from mmd2gltf whose animation already contains the physics (baked): no simulation
+  physicsBaked?: boolean;
 }
 
 function trackFailures(manager: THREE.LoadingManager, failedFiles: string[], nameOf: (url: string) => string) {
@@ -235,6 +240,8 @@ async function loadGltf(path: string, ctx: LoaderContext): Promise<LoadedModel> 
     // Files from mmd2gltf keep the PMX materials in extras.mmd; show them the MMD way
     const mmdExtras = await buildMmdExtrasMaterials(gltf);
     mmdExtras?.setEnabled(true);
+    // Read now, while the skeleton is still in its rest pose
+    const physics = readGltfPhysics(gltf);
 
     const source: ModelSource = {
       fileName,
@@ -253,6 +260,8 @@ async function loadGltf(path: string, ctx: LoaderContext): Promise<LoadedModel> 
       update: vrm ? (delta) => vrm.update(delta) : undefined,
       style: mmdExtras ? 'mmd' : undefined,
       mmdExtras: mmdExtras ?? undefined,
+      gltfPhysics: physics.source ?? undefined,
+      physicsBaked: physics.baked,
     };
   } catch (error) {
     blobUrls.forEach((u) => URL.revokeObjectURL(u));
