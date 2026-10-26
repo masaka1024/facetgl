@@ -1,6 +1,6 @@
 // MMD physics for PMX models (and glTF files converted from PMX, see gltfPhysics.ts), using the
-// TypeScript port of the FacetGL author's own Bullet 2.75-compatible engine (src/physics/engine, ported from the C# engine
-// https://github.com/masaka1024/mmd2gltf-cs-physics).
+// TypeScript port of the FacetGL author's own Bullet 2.75-compatible engine (src/physics/engine,
+// ported from the C# engine https://github.com/masaka1024/mmd2gltf-cs-physics).
 //
 // The engine works in MMD's own (left-handed) coordinates and reads the rigid bodies and
 // joints straight from the PMX file. This file is the boundary between it and three.js,
