@@ -27,6 +27,7 @@ It reproduces MMD's own shading for PMX files and for glTF files converted by [m
   Computed by a custom Bullet 2.75–compatible engine tuned to match MMD's behavior
 - **Supports mmd2gltf's `extras.mmd`**: converted GLB files can also be opened with MMD rendering, switchable with standard glTF rendering
 - **View settings**: perspective / orthographic projection, field of view, outline width
+- **Japanese / English UI**: follows your OS or browser language automatically (can be changed under "Language" in "View")
 - Supports compressed glTF (Draco / KTX2 / Meshopt)
 
 ## Supported formats

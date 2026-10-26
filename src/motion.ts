@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 import { MMDAnimationHelper } from 'three/addons/animation/MMDAnimationHelper.js';
 import { assetUrl, readFile, resolveUrl } from './platform';
+import { t } from './i18n';
 
 export const MOTION_EXTENSIONS = ['vmd'];
 
@@ -136,7 +137,7 @@ export class MmdMotion {
       readFile(path),
     ]);
     clip.name = path.split(/[\\/]/).pop() ?? clip.name;
-    if (clip.tracks.length === 0) throw new Error('このモデルで動かせるボーンやモーフがモーションに含まれていません。');
+    if (clip.tracks.length === 0) throw new Error(t('error.motionNoTargets'));
 
     const helper = new MMDAnimationHelper({ afterglow: 0, resetPhysicsOnLoop: false });
     helper.add(mesh, { animation: clip, physics: false });

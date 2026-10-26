@@ -26,6 +26,7 @@ glTF / GLB を中心に、VRM・MMD (PMX/PMD)・FBX・OBJ・STL を開ける Win
   MMD の挙動に合わせた自作の Bullet 2.75 互換エンジンで計算
 - **mmd2gltf の `extras.mmd` に対応**: 変換済み GLB も MMD 表示で開け、glTF 標準表示と切り替え可能
 - **表示設定**: 透視 / 平行投影、視野角、輪郭線の太さ
+- **日本語 / 英語表示**: OS やブラウザの言語に合わせて自動で切り替え (「表示設定」の「言語」で変更可)
 - 圧縮 glTF (Draco / KTX2 / Meshopt) に対応
 
 ## 対応形式

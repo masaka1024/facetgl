@@ -14,6 +14,7 @@ import { CameraRig } from './cameraRig';
 import { loadViewSettings, setupViewSettingsPanel, type ViewSettings } from './viewSettings';
 import { MAX_FRAME_TIME, ModelPhysics, physicsMesh } from './physics';
 import { MOTION_EXTENSIONS, MmdMotion, isMotionFile, motionTarget } from './motion';
+import { applyStaticTexts, onLanguageChange, t } from './i18n';
 
 // --- Variables ---
 let scene: THREE.Scene;
@@ -43,13 +44,14 @@ let seeking = false;
 let statsElapsed = 0;
 let shownFailedCount = 0;
 let mmdExtrasEnabled = false;
+let viewPanel: ReturnType<typeof setupViewSettingsPanel> | null = null;
 
 // Physics state (PMX, and glTF from mmd2gltf with extras.mmd rigid bodies)
 let physics: ModelPhysics | null = null;
 let physicsStarting = false;
 let physicsTime = 0; // milliseconds spent in physics since the last stats refresh
 let physicsFrames = 0;
-const PHYSICS_BUTTON_TITLE = 'F: 髪やスカートの剛体を物理演算で動かします (試験機能)';
+let physicsTimeText = ''; // " (4.0 ms)" on the physics button
 
 // VMD motion of the current MMD model (motion.ts)
 let motion: MmdMotion | null = null;
@@ -68,6 +70,9 @@ const modelDrag = {
 
 // --- Initialization ---
 function init() {
+  // Texts in index.html in the current language (Japanese or English, see i18n.ts)
+  applyStaticTexts();
+
   // Which build this is (version, branch, commit), so that test builds can be told apart
   setWindowTitle(`FacetGL ${__BUILD_LABEL__}`);
   document.getElementById('info')!.textContent = `FacetGL ${__BUILD_LABEL__}`;
@@ -142,7 +147,7 @@ function init() {
     } else if (e.key.toLowerCase() === 'i') {
       toggleInfoPanel();
     } else if (e.key.toLowerCase() === 'p') {
-      viewPanel.toggleProjection();
+      viewPanel?.toggleProjection();
     } else if (e.key.toLowerCase() === 'f') {
       togglePhysics();
     } else if (e.key.toLowerCase() === 'r') {
@@ -150,7 +155,7 @@ function init() {
     }
   });
 
-  const viewPanel = setupViewSettingsPanel(viewSettings, (settings) => {
+  viewPanel = setupViewSettingsPanel(viewSettings, (settings) => {
     viewSettings = settings;
     cameraRig.setProjection(settings.projection);
     cameraRig.setFov(settings.fov);
@@ -161,8 +166,8 @@ function init() {
   document.getElementById('mmd-button')!.addEventListener('click', toggleMmdExtras);
   document.getElementById('physics-button')!.addEventListener('click', togglePhysics);
   document.getElementById('physics-reset')!.addEventListener('click', resetPhysics);
-  document.getElementById('physics-hint')!.textContent =
-    `${isMac ? 'option' : 'Alt'} + ドラッグでモデルを動かすと、髪やスカートが揺れます`;
+  updatePhysicsHint();
+  onLanguageChange(refreshTexts);
   setupModelDrag();
   setupAnimationControls();
 
@@ -185,9 +190,9 @@ function init() {
 
 async function openFileDialog() {
   const filters = [
-    { name: '対応しているすべての形式', extensions: [...MODEL_EXTENSIONS, ...MOTION_EXTENSIONS] },
+    { name: t('dialog.allFormats'), extensions: [...MODEL_EXTENSIONS, ...MOTION_EXTENSIONS] },
     ...FORMATS,
-    { name: 'MMD モーション (VMD)', extensions: MOTION_EXTENSIONS },
+    { name: t('dialog.motion'), extensions: MOTION_EXTENSIONS },
   ];
   const picked = await pickModelFile(filters, MODEL_EXTENSIONS);
   if (picked) openModel(picked);
@@ -201,9 +206,9 @@ async function openModel(picked: PickedFiles | null) {
     if (picked.motion && motionTarget(currentModel)) await loadMotion(picked.motion);
   } else if (picked.motion) {
     if (motionTarget(currentModel)) await loadMotion(picked.motion);
-    else showError('モーション (VMD) は、先に PMX / PMD モデルを開いてから読み込んでください。');
+    else showError(t('error.motionNeedsModel'));
   } else {
-    showError(`対応している形式のファイルが見つかりませんでした。\n(${[...MODEL_EXTENSIONS, ...MOTION_EXTENSIONS].join(', ')})`);
+    showError(t('error.noSupportedFile', { extensions: [...MODEL_EXTENSIONS, ...MOTION_EXTENSIONS].join(', ') }));
   }
 }
 
@@ -214,7 +219,7 @@ async function loadMotion(path: string) {
   const info = document.getElementById('info')!;
   const previousInfo = info.textContent;
   const fileName = path.split(/[\\/]/).pop() ?? path;
-  info.textContent = `モーション読み込み中: ${fileName}`;
+  info.textContent = t('status.loadingMotion', { name: fileName });
   try {
     const loaded = await MmdMotion.load(mesh, path);
     if (currentModel !== mesh) {
@@ -230,7 +235,7 @@ async function loadMotion(path: string) {
   } catch (error) {
     console.error('Error loading motion:', error);
     info.textContent = previousInfo;
-    showError(`モーションの読み込みに失敗しました。\n${fileName}\n\n${error}`);
+    showError(t('error.motionLoad', { name: fileName, error: String(error) }));
   } finally {
     motionLoading = false;
   }
@@ -243,7 +248,7 @@ async function loadModel(path: string) {
   const fileName = path.split(/[\\/]/).pop() ?? path;
   const info = document.getElementById('info')!;
   const previousInfo = info.textContent;
-  info.textContent = `読み込み中: ${fileName}`;
+  info.textContent = t('status.loading', { name: fileName });
 
   try {
     const loaded = await loadModelFile(path, { dracoLoader, ktx2Loader });
@@ -288,7 +293,7 @@ async function loadModel(path: string) {
   } catch (error) {
     console.error('Error loading model:', error);
     info.textContent = previousInfo;
-    showError(`モデルの読み込みに失敗しました。\n${fileName}\n\n${error}`);
+    showError(t('error.modelLoad', { name: fileName, error: String(error) }));
   } finally {
     loading = false;
   }
@@ -363,7 +368,7 @@ function setupAnimations(model: THREE.Object3D, animations: THREE.AnimationClip[
   currentAction = null;
 
   const select = document.getElementById('anim-clip') as HTMLSelectElement;
-  select.replaceChildren(...clips.map((clip, i) => new Option(clip.name || `アニメーション ${i}`, String(i))));
+  select.replaceChildren(...clips.map((clip, i) => new Option(clip.name || t('anim.unnamed', { index: i }), String(i))));
   document.body.classList.toggle('has-animation', clips.length > 0);
 
   if (clips.length > 0) selectClip(0, true);
@@ -467,7 +472,7 @@ function toggleMmdExtras() {
 function updateMmdButton() {
   const button = document.getElementById('mmd-button')!;
   button.classList.toggle('active', mmdExtrasEnabled);
-  button.textContent = mmdExtrasEnabled ? 'MMD表示: ON' : 'MMD表示: OFF';
+  button.textContent = mmdExtrasEnabled ? t('mmd.on') : t('mmd.off');
 }
 
 // --- Physics (PMX rigid bodies, see physics.ts) ---
@@ -491,7 +496,7 @@ async function togglePhysics() {
     else created.dispose(); // another model was opened while the PMX was being read
   } catch (error) {
     console.error('Error starting physics:', error);
-    showError(`物理演算を開始できませんでした。\n\n${error}`);
+    showError(t('error.physicsStart', { error: String(error) }));
   } finally {
     physicsStarting = false;
     updatePhysicsButton();
@@ -549,7 +554,7 @@ function updateClip(delta: number) {
   lastClipTime = time;
 }
 
-function updatePhysicsButton(timeText = '') {
+function updatePhysicsButton() {
   const button = document.getElementById('physics-button') as HTMLButtonElement;
   const on = physics !== null;
   button.classList.toggle('active', on);
@@ -557,13 +562,35 @@ function updatePhysicsButton(timeText = '') {
   if (currentLoaded?.physicsBaked) {
     // The animation already contains the physics: it is played as it is
     button.disabled = true;
-    button.textContent = '物理: ベイク済み';
-    button.title = 'このファイルのアニメーションには物理演算の結果が焼き込まれているため、そちらを優先して再生しています';
+    button.textContent = t('physics.baked');
+    button.title = t('physics.bakedTitle');
     return;
   }
   button.disabled = false;
-  button.title = PHYSICS_BUTTON_TITLE;
-  button.textContent = physicsStarting ? '物理: 準備中…' : on ? `物理: ON${timeText}` : '物理: OFF';
+  button.title = t('physics.title');
+  if (!on) physicsTimeText = '';
+  button.textContent = physicsStarting ? t('physics.starting') : on ? t('physics.on', { time: physicsTimeText }) : t('physics.off');
+}
+
+function updatePhysicsHint() {
+  document.getElementById('physics-hint')!.textContent = t('physics.hint', { key: isMac ? 'option' : 'Alt' });
+}
+
+// The language was switched in 表示設定: redraw the texts set from code
+function refreshTexts() {
+  updateMmdButton();
+  updatePhysicsButton();
+  updatePhysicsHint();
+  viewPanel?.refresh();
+  if (!motion) {
+    const select = document.getElementById('anim-clip') as HTMLSelectElement;
+    clips.forEach((clip, i) => {
+      if (!clip.name && select.options[i]) select.options[i].text = t('anim.unnamed', { index: i });
+    });
+  }
+  shownFailedCount = -1; // rewrite the "files could not be loaded" notice
+  updateFailedNotice();
+  if (currentLoaded) currentLoaded.renderInfo(document.getElementById('info-panel')!);
 }
 
 function setupModelDrag() {
@@ -760,7 +787,8 @@ function animate() {
     updateFailedNotice();
     // Average physics time per frame, shown on the button (how heavy the model is)
     if (physics && physicsFrames > 0) {
-      updatePhysicsButton(` (${(physicsTime / physicsFrames).toFixed(1)} ms)`);
+      physicsTimeText = ` (${(physicsTime / physicsFrames).toFixed(1)} ms)`;
+      updatePhysicsButton();
       physicsTime = 0;
       physicsFrames = 0;
     }
@@ -778,7 +806,7 @@ function updateFailedNotice() {
   if (failed.length > 0) {
     const warn = document.createElement('span');
     warn.className = 'warn';
-    warn.textContent = `  ⚠ 読み込めないファイル ${failed.length} 件 (詳細は「情報」)`;
+    warn.textContent = t('status.failedFiles', { count: failed.length });
     info.append(warn);
   }
   if (document.body.classList.contains('show-info')) currentLoaded?.renderInfo(document.getElementById('info-panel')!);

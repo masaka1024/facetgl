@@ -20,6 +20,7 @@ import {
 } from './physics/engine';
 import type { LoadedModel } from './formats';
 import type { GltfPhysicsSource } from './gltfPhysics';
+import { t } from './i18n';
 
 // Same settings as the Unity importer's defaults (MmdPhysicsBehaviour)
 const GRAVITY = 98; // MMD scale (9.8 m/s² × 10)
@@ -123,14 +124,14 @@ export class ModelPhysics {
   static async create(loaded: LoadedModel) {
     if (loaded.gltfPhysics) return ModelPhysics.createGltf(loaded.gltfPhysics);
     const mesh = physicsMesh(loaded);
-    if (!mesh || !loaded.pmxSource) throw new Error('このモデルは物理演算に対応していません。');
+    if (!mesh || !loaded.pmxSource) throw new Error(t('error.noPhysics'));
     // The float32 WebAssembly kernel (same results, about 3x faster). Browsers refuse to compile
     // it synchronously on the main thread, so it is prepared here; without it the engine uses
     // the TypeScript path.
     const [buffer] = await Promise.all([loaded.pmxSource(), initSolverKernel()]);
     const model = readPmx(buffer);
     if (model.boneNames.length !== mesh.skeleton.bones.length) {
-      throw new Error(`ボーン数が一致しません (PMX ${model.boneNames.length} / 表示 ${mesh.skeleton.bones.length})`);
+      throw new Error(t('error.boneCount', { pmx: model.boneNames.length, shown: mesh.skeleton.bones.length }));
     }
     PmxPhysicsBuilder.maxDynamicMass = 0; // engine default (no mass clamp)
     return new ModelPhysics(mesh, PmxPhysicsBuilder.build(model), mesh, mesh.skeleton.bones, 1, false);
