@@ -74,9 +74,10 @@
         #mmd-button.active { background: #3a2a40; border-color: #b07ad0; color: #f0d8ff; }
         #info-panel .comment { white-space: pre-wrap; color: #aaa; margin: 4px 0 8px; font-size: 0.75rem; }
 
-        /* Physics (PMX / PMD rigid bodies) */
+        /* Physics (PMX / PMD rigid bodies, and glTF from mmd2gltf) */
         #physics-button, #physics-reset { display: none; }
-        body.loaded.has-physics #physics-button { display: inline-block; }
+        body.loaded.has-physics #physics-button, body.loaded.physics-baked #physics-button { display: inline-block; }
+        #physics-button:disabled { opacity: 0.6; cursor: default; background: #222; color: #aaa; }
         body.loaded.has-physics.physics-on #physics-reset { display: inline-block; }
         #physics-button.active { background: #20402a; border-color: #5c9; color: #d8ffe6; }
         #physics-hint {

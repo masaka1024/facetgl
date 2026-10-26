@@ -44,16 +44,18 @@ let statsElapsed = 0;
 let shownFailedCount = 0;
 let mmdExtrasEnabled = false;
 
-// Physics state (PMX / PMD only)
+// Physics state (PMX, and glTF from mmd2gltf with extras.mmd rigid bodies)
 let physics: ModelPhysics | null = null;
 let physicsStarting = false;
 let physicsTime = 0; // milliseconds spent in physics since the last stats refresh
 let physicsFrames = 0;
+const PHYSICS_BUTTON_TITLE = 'F: 髪やスカートの剛体を物理演算で動かします (試験機能)';
 
 // VMD motion of the current MMD model (motion.ts)
 let motion: MmdMotion | null = null;
 let motionLoading = false;
 let lastMotionTime = 0;
+let lastClipTime = 0; // the same for the file's own animation (glTF etc.)
 // Alt (option) + drag moves the model to shake it; it springs back when released
 const modelDrag = {
   active: false,
@@ -268,6 +270,7 @@ async function loadModel(path: string) {
     document.body.classList.toggle('has-mmd-extras', !!loaded.mmdExtras);
     updateMmdButton();
     document.body.classList.toggle('has-physics', !!physicsMesh(currentLoaded));
+    document.body.classList.toggle('physics-baked', !!currentLoaded?.physicsBaked);
     updatePhysicsButton();
     fitCameraToModel(currentModel);
     setupAnimations(currentModel, loaded.animations);
@@ -385,6 +388,8 @@ function selectClip(index: number, play: boolean) {
   seek.max = String(clips[index].duration);
   setPlaying(play);
   mixer.update(0);
+  lastClipTime = currentAction.time;
+  physics?.realign(); // the pose jumped to the new clip
 }
 
 function setPlaying(value: boolean) {
@@ -406,6 +411,8 @@ function setAnimationTime(time: number) {
     physics?.realign(); // the pose jumped: place the bodies around it
   } else {
     mixer.update(0);
+    lastClipTime = time;
+    physics?.realign();
   }
 }
 
@@ -509,6 +516,10 @@ function resetPhysics() {
     // Keep the motion's pose and start the physics over around it
     motion.update(0);
     physics.realign();
+  } else if (mixer && currentAction) {
+    // glTF animation: the same, keeping the clip's pose
+    mixer.update(0);
+    physics.realign();
   } else {
     physics.reset();
   }
@@ -525,11 +536,29 @@ function updateMotion(delta: number) {
   lastMotionTime = time;
 }
 
+// Plays the file's own animation (glTF etc.); physics runs on the posed bones in animate
+function updateClip(delta: number) {
+  if (!mixer || !currentAction) return;
+  if (playing && !seeking) mixer.update(delta);
+  const time = currentAction.time;
+  if (time < lastClipTime - 1e-6 && !seeking) physics?.realign(); // looped back to the start
+  lastClipTime = time;
+}
+
 function updatePhysicsButton(timeText = '') {
-  const button = document.getElementById('physics-button')!;
+  const button = document.getElementById('physics-button') as HTMLButtonElement;
   const on = physics !== null;
   button.classList.toggle('active', on);
   document.body.classList.toggle('physics-on', on);
+  if (currentLoaded?.physicsBaked) {
+    // The animation already contains the physics: it is played as it is
+    button.disabled = true;
+    button.textContent = '物理: ベイク済み';
+    button.title = 'このファイルのアニメーションには物理演算の結果が焼き込まれているため、そちらを優先して再生しています';
+    return;
+  }
+  button.disabled = false;
+  button.title = PHYSICS_BUTTON_TITLE;
   button.textContent = physicsStarting ? '物理: 準備中…' : on ? `物理: ON${timeText}` : '物理: OFF';
 }
 
@@ -708,7 +737,7 @@ function animate() {
   // and kick the hair (the cause of the hair blow-ups found with the Unity importer). The motion
   // plays a little slower on such a machine instead.
   if (motion) updateMotion(physics ? Math.min(delta, MAX_FRAME_TIME) : delta);
-  else if (mixer && playing && !seeking) mixer.update(delta);
+  else updateClip(physics ? Math.min(delta, MAX_FRAME_TIME) : delta);
   // VRM spring bones / expressions
   currentLoaded?.update?.(delta);
   updatePhysics(delta);
