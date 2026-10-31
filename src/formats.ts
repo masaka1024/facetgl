@@ -13,7 +13,11 @@ import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
 import { assetUrl, fileSize, listFiles, readFile, resolveUrl, textureSearchRoots } from './platform';
 import { renderInfoPanel, renderSceneInfoPanel, type ModelSource } from './info';
 import { readGltfPhysics, type GltfPhysicsSource } from './gltfPhysics';
-import { applyMmdShading, buildMmdExtrasMaterials, fixMmdLoaderToonRotation, type MmdExtrasMaterials } from './mmdShading';
+import {
+  applyMmdShading, applyTextureTransparency, buildMmdExtrasMaterials, fixMmdLoaderMissingTextures, fixMmdLoaderTextureTransparency,
+  fixMmdLoaderToonRotation,
+  type MmdExtrasMaterials,
+} from './mmdShading';
 import { t } from './i18n';
 
 export const FORMATS = [
@@ -295,8 +299,11 @@ async function loadMmd(path: string): Promise<LoadedModel> {
   const manager = textureManager(await indexFolder(path), failedFiles);
   const loader = new MMDLoader(manager);
   fixMmdLoaderToonRotation(loader);
+  fixMmdLoaderTextureTransparency(loader);
+  fixMmdLoaderMissingTextures(loader);
   const mesh = await loader.loadAsync(assetUrl(path));
   applyMmdShading(mesh);
+  applyTextureTransparency(mesh);
   const isPmx = fileExtension(path) === 'pmx';
   const model = await sceneModel(path, isPmx ? 'PMX (MMD)' : 'PMD (MMD)', mesh, [], failedFiles);
   return { ...model, style: 'mmd', pmxSource: isPmx ? () => readFile(path) : undefined };
