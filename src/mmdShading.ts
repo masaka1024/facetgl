@@ -48,10 +48,11 @@ vec4 mmdTexel = vec4( 1.0 );
 #ifdef USE_MAP
 	mmdTexel = texture2D( map, vMapUv );
 #endif
-// Nothing to draw (opacity 0, e.g. a part hidden until a morph shows it, or an empty texel):
-// MMD blends it away, so it must not write depth either. Otherwise it hides what is drawn
-// after it, such as the sleeved arm inside a hidden bare arm, and leaves a hole.
-if ( diffuseColor.a < 0.5 / 255.0 ) discard;
+// A material with opacity 0 (a part hidden until a morph shows it) is not drawn by MMD at all,
+// so it must not write depth either. Otherwise it hides what is drawn after it, such as the
+// sleeved arm inside a hidden bare arm, and leaves a hole. Transparent texels of a visible
+// material do write depth in MMD (they hide what comes later in PMX order), so they stay.
+if ( opacity < 0.5 / 255.0 ) discard;
 `;
 
 const SHADING = /* glsl */ `
@@ -70,7 +71,12 @@ mmdColor *= mmdToSRGB( mmdTexel.rgb );
 	// with v = 0 at the top of the image. three.js's matcap formula assumes flipped
 	// images and adds a perspective correction, which turned spheres upside down.
 	vec2 mmdSphereUv = vec2( normal.x * 0.5 + 0.5, 0.5 - normal.y * 0.5 );
-	vec3 mmdSphereColor = mmdToSRGB( texture2D( mmdSphere, mmdSphereUv ).rgb );
+	vec4 mmdSphereTexel = texture2D( mmdSphere, mmdSphereUv );
+	vec3 mmdSphereColor = mmdToSRGB( mmdSphereTexel.rgb );
+	// MMD also multiplies the alpha by the sphere's alpha (both modes). Highlight layers use a
+	// sphere that is black and fully transparent outside the highlight; without this the black
+	// was drawn over the hair.
+	diffuseColor.a *= mmdSphereTexel.a;
 	#if MMD_SPHERE_MODE == ${SPHERE_MULTIPLY}
 		mmdColor *= mmdSphereColor;
 	#else
@@ -218,14 +224,28 @@ export function fixMmdLoaderMissingTextures(loader: object) {
   };
 }
 
-// Makes the materials found above blend (now, or when their texture finishes loading)
+// MMD draws the materials of a model one after another in PMX order, every one of them blended.
+// three.js draws all opaque materials first and the transparent ones afterwards, which changes
+// what hides what: a hair clip inside the hair (later in PMX order) is hidden by MMD under the
+// semi-transparent outer hair layer drawn before it, but three.js drew the clip first and blended
+// the layer over it, so the clip showed through the bangs. Put every material in the transparent
+// pass, where the materials of one mesh keep their order. Blending a fully opaque fragment gives
+// the same color, so opaque materials look the same. Double-sided materials are drawn in one
+// pass, as MMD does (three.js would draw the back faces first, then the front faces).
+//
+// Also makes the materials found above blend (now, or when their texture finishes loading).
+// userData.mmdAlpha tells which materials really have transparency (for the info panel).
 export function applyTextureTransparency(mesh: THREE.Mesh) {
   const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  for (const material of materials) {
+    material.userData.mmdAlpha = material.transparent;
+    material.transparent = true;
+    material.forceSinglePass = true;
+    material.needsUpdate = true;
+  }
   const apply = (groupIndex: number) => {
     const material = materials[groupIndex];
-    if (!material || material.transparent) return;
-    material.transparent = true;
-    material.needsUpdate = true;
+    if (material) material.userData.mmdAlpha = true;
   };
   const userData = mesh.geometry.userData;
   (userData[ALPHA_GROUPS] as Set<number> | undefined)?.forEach(apply);
