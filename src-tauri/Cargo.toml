@@ -1,6 +1,6 @@
 [package]
 name = "facetgl"
-version = "0.5.0"
+version = "0.6.0"
 description = "FacetGL - a desktop 3D model viewer for glTF / GLB / VRM / PMX / FBX / OBJ / STL"
 authors = ["masaka1024"]
 license = "MIT"
