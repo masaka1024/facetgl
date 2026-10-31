@@ -366,7 +366,7 @@ export function renderSceneInfoPanel(container: HTMLElement, src: SceneSource) {
       String(i),
       m.name,
       m.type.replace(/Material$/, ''),
-      m.transparent ? '○' : '',
+      (m.userData.mmdAlpha ?? m.transparent) ? '○' : '', // MMD materials are all drawn blended (mmdShading.ts)
       m.side === THREE.DoubleSide ? '○' : '',
     ])
   )));

@@ -48,6 +48,11 @@ vec4 mmdTexel = vec4( 1.0 );
 #ifdef USE_MAP
 	mmdTexel = texture2D( map, vMapUv );
 #endif
+// A material with opacity 0 (a part hidden until a morph shows it) is not drawn by MMD at all,
+// so it must not write depth either. Otherwise it hides what is drawn after it, such as the
+// sleeved arm inside a hidden bare arm, and leaves a hole. Transparent texels of a visible
+// material do write depth in MMD (they hide what comes later in PMX order), so they stay.
+if ( opacity < 0.5 / 255.0 ) discard;
 `;
 
 const SHADING = /* glsl */ `
@@ -66,7 +71,12 @@ mmdColor *= mmdToSRGB( mmdTexel.rgb );
 	// with v = 0 at the top of the image. three.js's matcap formula assumes flipped
 	// images and adds a perspective correction, which turned spheres upside down.
 	vec2 mmdSphereUv = vec2( normal.x * 0.5 + 0.5, 0.5 - normal.y * 0.5 );
-	vec3 mmdSphereColor = mmdToSRGB( texture2D( mmdSphere, mmdSphereUv ).rgb );
+	vec4 mmdSphereTexel = texture2D( mmdSphere, mmdSphereUv );
+	vec3 mmdSphereColor = mmdToSRGB( mmdSphereTexel.rgb );
+	// MMD also multiplies the alpha by the sphere's alpha (both modes). Highlight layers use a
+	// sphere that is black and fully transparent outside the highlight; without this the black
+	// was drawn over the hair.
+	diffuseColor.a *= mmdSphereTexel.a;
 	#if MMD_SPHERE_MODE == ${SPHERE_MULTIPLY}
 		mmdColor *= mmdSphereColor;
 	#else
@@ -156,6 +166,140 @@ export function fixMmdLoaderToonRotation(loader: object) {
     context.drawImage(image as CanvasImageSource, -width / 2, -height / 2);
     return context.getImageData(0, 0, height, width);
   };
+}
+
+// MMD blends every material with its texture's alpha. MMDLoader (three.js r160) tries to find the
+// materials whose texture has transparent pixels, but its check reads the wrong triangles (it
+// skips most of them and then reads past the material) and its result is never applied to the
+// material, so they render opaque: the transparent pixels show their color, usually black (a
+// decal drawn as a black box). Replace the check with one that looks at every triangle of the
+// material, and record the result per material; applyTextureTransparency() then applies it.
+const ALPHA_GROUPS = 'facetglAlphaGroups';
+const ALPHA_LISTENER = 'facetglOnAlphaGroup';
+
+export function fixMmdLoaderTextureTransparency(loader: object) {
+  const builder = (loader as { meshBuilder?: { materialBuilder?: { _checkImageTransparency?: unknown } } }).meshBuilder?.materialBuilder;
+  if (!builder || typeof builder._checkImageTransparency !== 'function') return;
+  builder._checkImageTransparency = (
+    map: THREE.Texture & { readyCallbacks?: ((texture: THREE.Texture) => void)[] },
+    geometry: THREE.BufferGeometry,
+    groupIndex: number,
+  ) => {
+    map.readyCallbacks?.push((texture) => {
+      if (!hasTransparentTexels(texture, geometry, groupIndex)) return;
+      const groups: Set<number> = (geometry.userData[ALPHA_GROUPS] ??= new Set<number>());
+      groups.add(groupIndex);
+      geometry.userData[ALPHA_LISTENER]?.(groupIndex);
+    });
+  };
+}
+
+// A texture that cannot be loaded (not in the folder) samples as transparent black, so the
+// material vanished (and with the depth fix above, only its outline was left). MMD draws such
+// a material as if it had no texture. Give a missing texture a 1-pixel image with no effect:
+// white for a texture or a multiply sphere (.sph), black for an add sphere (.spa).
+export function fixMmdLoaderMissingTextures(loader: object) {
+  type LoadTexture = (filePath: string, textures: object, params: object, onProgress?: unknown, onError?: (e: unknown) => void) => THREE.Texture;
+  const builder = (loader as { meshBuilder?: { materialBuilder?: { _loadTexture?: LoadTexture } } }).meshBuilder?.materialBuilder;
+  const original = builder?._loadTexture;
+  if (!builder || typeof original !== 'function') return;
+  builder._loadTexture = (filePath, textures, params, onProgress, onError) => {
+    let texture: THREE.Texture | undefined;
+    const failed = (event: unknown) => {
+      if (texture) {
+        const canvas = document.createElement('canvas');
+        canvas.width = canvas.height = 1;
+        const context = canvas.getContext('2d');
+        if (context) {
+          context.fillStyle = /\.spa$/i.test(filePath) ? '#000' : '#fff';
+          context.fillRect(0, 0, 1, 1);
+          texture.image = canvas;
+          texture.needsUpdate = true;
+        }
+      }
+      onError?.(event);
+    };
+    texture = original.call(builder, filePath, textures, params, onProgress, failed);
+    return texture;
+  };
+}
+
+// MMD draws the materials of a model one after another in PMX order, every one of them blended.
+// three.js draws all opaque materials first and the transparent ones afterwards, which changes
+// what hides what: a hair clip inside the hair (later in PMX order) is hidden by MMD under the
+// semi-transparent outer hair layer drawn before it, but three.js drew the clip first and blended
+// the layer over it, so the clip showed through the bangs. Put every material in the transparent
+// pass, where the materials of one mesh keep their order. Blending a fully opaque fragment gives
+// the same color, so opaque materials look the same. Double-sided materials are drawn in one
+// pass, as MMD does (three.js would draw the back faces first, then the front faces).
+//
+// Also makes the materials found above blend (now, or when their texture finishes loading).
+// userData.mmdAlpha tells which materials really have transparency (for the info panel).
+export function applyTextureTransparency(mesh: THREE.Mesh) {
+  const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+  for (const material of materials) {
+    material.userData.mmdAlpha = material.transparent;
+    material.transparent = true;
+    material.forceSinglePass = true;
+    material.needsUpdate = true;
+  }
+  const apply = (groupIndex: number) => {
+    const material = materials[groupIndex];
+    if (material) material.userData.mmdAlpha = true;
+  };
+  const userData = mesh.geometry.userData;
+  (userData[ALPHA_GROUPS] as Set<number> | undefined)?.forEach(apply);
+  userData[ALPHA_LISTENER] = apply;
+}
+
+function hasTransparentTexels(texture: THREE.Texture, geometry: THREE.BufferGeometry, groupIndex: number) {
+  if ((texture as THREE.CompressedTexture).isCompressedTexture) return false;
+  const image = texture.image as { width: number; height: number; data?: ArrayLike<number> };
+  const width = image?.width ?? 0;
+  const height = image?.height ?? 0;
+  if (!width || !height) return false;
+
+  let data = image.data;
+  if (!data) {
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext('2d', { willReadFrequently: true });
+    if (!context) return false;
+    context.drawImage(texture.image as CanvasImageSource, 0, 0);
+    data = context.getImageData(0, 0, width, height).data;
+  }
+  if (data.length !== width * height * 4) return false; // no alpha channel
+
+  // Same threshold and UV mapping as MMDLoader (flipY = false, repeat wrapping)
+  const THRESHOLD = 253;
+  const alphaAt = (u: number, v: number) => {
+    let x = Math.round(u * width) % width;
+    let y = Math.round(v * height) % height;
+    if (x < 0) x += width;
+    if (y < 0) y += height;
+    return data![(y * width + x) * 4 + 3];
+  };
+
+  const uv = geometry.getAttribute('uv');
+  const index = geometry.index;
+  const group = geometry.groups[groupIndex];
+  if (!uv || !index || !group) return false;
+  const end = Math.min(group.start + group.count, index.count);
+  for (let i = group.start; i + 2 < end; i += 3) {
+    let cu = 0;
+    let cv = 0;
+    for (let j = 0; j < 3; j++) {
+      const vertex = index.getX(i + j);
+      const u = uv.getX(vertex);
+      const v = uv.getY(vertex);
+      if (alphaAt(u, v) < THRESHOLD) return true;
+      cu += u;
+      cv += v;
+    }
+    if (alphaAt(cu / 3, cv / 3) < THRESHOLD) return true;
+  }
+  return false;
 }
 
 export function applyMmdShading(root: THREE.Object3D) {
