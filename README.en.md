@@ -19,7 +19,7 @@ It reproduces MMD's own shading for PMX files and for glTF files converted by [m
 - **External files**: the `.bin` and textures of a `.gltf`, and the textures of PMX/FBX/OBJ files, are loaded automatically from the same folder.
   Textures missing from their referenced path are looked up by file name in the model's folder and its parent folders (up to 3 levels; nearer folders first, never above your home folder)
 - **Animation playback**: play/pause, seek, speed control (glTF / FBX)
-- **MMD motion (VMD)**: after opening a PMX / PMD, drop (or "Open") a VMD to play it. Supports IK and inherited (grant) parents, and can be combined with physics to make the model dance
+- **MMD motion (VMD)**: after opening a PMX / PMD, drop (or "Open motion") a VMD to play it. Supports IK and inherited (grant) parents, and can be combined with physics to make the model dance
 - **Info panel**: file size; vertex, triangle, material, bone and morph counts; texture list; node hierarchy; rendering status;
   files that could not be loaded; VRM license terms
 - **MMD rendering**: PMX/PMD are shaded with the same formulas as MMD (toon, sphere, edge)
@@ -83,6 +83,7 @@ xattr -dr com.apple.quarantine /Applications/FacetGL.app
 |---|---|
 | Left drag / right drag / wheel | Rotate / pan / zoom |
 | `Ctrl+O` (`⌘O` on Mac) | Open a file (a model, or a motion for the open MMD model) |
+| "Open motion" button | Shown while a PMX / PMD is open. Choose a VMD to play it |
 | `Space` | Play / pause animation |
 | `I` | Show / hide the info panel |
 | `P` | Toggle perspective / orthographic projection |

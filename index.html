@@ -40,6 +40,9 @@
 
         /* Info panel */
         #info-button { display: none; }
+        /* Shown while an MMD model (PMX / PMD) that can play a VMD is open */
+        #motion-button { display: none; }
+        body.loaded.can-play-motion #motion-button { display: inline-block; }
         body.loaded #info-button { display: inline-block; }
         body.show-info #info-button { background: #3a3a3a; color: #fff; }
         #info-panel {
@@ -136,6 +139,7 @@
     <div id="toolbar">
         <button id="open-button" title="Ctrl+O" data-i18n="toolbar.open">開く</button>
         <button id="open-folder-button" data-i18n="toolbar.openFolder" data-i18n-title="toolbar.openFolderTitle" title="PMX などテクスチャが別ファイルのモデル向け">フォルダを開く</button>
+        <button id="motion-button" data-i18n="toolbar.motion" data-i18n-title="toolbar.motionTitle" title="MMD モーション (VMD) を選んで、開いているモデルで再生します">モーションを開く</button>
         <button id="info-button" title="I" data-i18n="toolbar.info">情報</button>
         <button id="view-button" data-i18n="toolbar.view">表示設定</button>
         <button id="mmd-button" data-i18n-title="mmd.title" title="extras.mmd（PMX の材質情報）を検出しました。クリックで MMD 表示と glTF 標準表示を切り替えます">MMD表示: ON</button>

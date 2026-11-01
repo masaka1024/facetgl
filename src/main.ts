@@ -7,7 +7,7 @@ import { OutlineEffect } from 'three/addons/effects/OutlineEffect.js';
 import { updateRenderStats } from './info';
 import { FORMATS, MODEL_EXTENSIONS, loadModelFile, type LoadedModel } from './formats';
 import {
-  isMac, isTauri, onModelDrop, onOpenFile, pickModelFile, pickModelFolder, setWindowTitle, showError, startupFile,
+  isMac, isTauri, onModelDrop, onOpenFile, pickModelFile, pickModelFolder, pickMotionFile, setWindowTitle, showError, startupFile,
   type PickedFiles,
 } from './platform';
 import { CameraRig } from './cameraRig';
@@ -131,6 +131,10 @@ function init() {
   const openButton = document.getElementById('open-button')!;
   if (isMac) openButton.title = '⌘O';
   openButton.addEventListener('click', openFileDialog);
+  document.getElementById('motion-button')!.addEventListener('click', async () => {
+    const picked = await pickMotionFile({ name: t('dialog.motion'), extensions: MOTION_EXTENSIONS }, MODEL_EXTENSIONS);
+    if (picked) openModel(picked);
+  });
   document.getElementById('open-folder-button')!.addEventListener('click', async () => {
     const picked = await pickModelFolder(MODEL_EXTENSIONS);
     if (picked) openModel(picked);
@@ -279,6 +283,7 @@ async function loadModel(path: string) {
     document.body.classList.toggle('has-mmd-extras', !!loaded.mmdExtras);
     updateMmdButton();
     document.body.classList.toggle('has-physics', !!physicsMesh(currentLoaded));
+    document.body.classList.toggle('can-play-motion', !!motionTarget(currentModel));
     document.body.classList.toggle('physics-baked', !!currentLoaded?.physicsBaked);
     updatePhysicsButton();
     fitCameraToModel(currentModel);

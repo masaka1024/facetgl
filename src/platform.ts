@@ -189,13 +189,13 @@ function chooseModel(paths: string[], extensions: string[]) {
   return candidates[0] ?? null;
 }
 
-function pickWebFiles(extensions: string[], directory: boolean): Promise<PickedFiles | null> {
+function pickWebFiles(extensions: string[], directory: boolean, accept?: string): Promise<PickedFiles | null> {
   return new Promise((resolve) => {
     const input = document.createElement('input');
     input.type = 'file';
     input.multiple = true;
     if (directory) input.webkitdirectory = true;
-    else input.accept = extensions.map((e) => '.' + e).join(',') + ',.vmd,image/*,.bin,.mtl,.tga,.bmp,.sph,.spa';
+    else input.accept = accept ?? extensions.map((e) => '.' + e).join(',') + ',.vmd,image/*,.bin,.mtl,.tga,.bmp,.sph,.spa';
     input.addEventListener('change', () => {
       const files = [...(input.files ?? [])];
       if (files.length === 0) return resolve(null);
@@ -213,6 +213,15 @@ export async function pickModelFile(filters: { name: string; extensions: string[
     return typeof path === 'string' ? pickFrom([path], extensions) : null;
   }
   return pickWebFiles(extensions, false);
+}
+
+// A motion (VMD) for the open model. null = cancelled
+export async function pickMotionFile(filter: { name: string; extensions: string[] }, modelExtensions: string[]): Promise<PickedFiles | null> {
+  if (isTauri) {
+    const path = await open({ multiple: false, directory: false, filters: [filter] });
+    return typeof path === 'string' ? { model: null, motion: path } : null;
+  }
+  return pickWebFiles(modelExtensions, false, filter.extensions.map((e) => '.' + e).join(','));
 }
 
 export async function pickModelFolder(extensions: string[]): Promise<PickedFiles | null> {
