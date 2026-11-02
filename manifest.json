@@ -1,0 +1,16 @@
+{
+  "name": "FacetGL - 3D Model Viewer",
+  "short_name": "FacetGL",
+  "description": "Free 3D model viewer for glTF, GLB, VRM, MMD (PMX/PMD), FBX, OBJ, STL. Works in browser with MMD physics and VMD motion.",
+  "start_url": "/index.html",
+  "display": "standalone",
+  "background_color": "#111",
+  "theme_color": "#1a1a1a",
+  "icons": [
+    {
+      "src": "/favicon.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
